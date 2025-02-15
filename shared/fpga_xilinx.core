@@ -11,6 +11,9 @@ filesets:
     files:
       - rtl/fpga/xilinx/clkgen_xil7series.sv
       - rtl/ram_2p.sv
+      - rtl/ram_1p.sv
+      - rtl/bus.sv
+      - rtl/timer.sv
     file_type: systemVerilogSource
 
 targets:

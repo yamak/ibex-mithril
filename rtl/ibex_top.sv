@@ -88,6 +88,8 @@ module ibex_top import ibex_pkg::*; #(
   input  logic                         debug_req_i,
   output crash_dump_t                  crash_dump_o,
   output logic                         double_fault_seen_o,
+  output logic [31:0]                  current_pc_o,
+  input  logic                         ext_stall_i,
 
   // RISC-V Formal Interface
   // Does not comply with the coding standards of _i/_o suffixes, but follows
@@ -268,7 +270,7 @@ module ibex_top import ibex_pkg::*; #(
   // inputs here.
   assign data_rdata_core[31:0] = data_rdata_i;
   assign instr_rdata_core[31:0] = instr_rdata_i;
-
+  
   if (MemECC) begin : gen_mem_rdata_ecc
     assign data_rdata_core[38:32] = data_rdata_intg_i;
     assign instr_rdata_core[38:32] = instr_rdata_intg_i;
@@ -365,7 +367,8 @@ module ibex_top import ibex_pkg::*; #(
     .debug_req_i,
     .crash_dump_o,
     .double_fault_seen_o,
-
+    .current_pc_o,
+    .ext_stall_i,
 `ifdef RVFI
     .rvfi_valid,
     .rvfi_order,

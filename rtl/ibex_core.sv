@@ -156,7 +156,9 @@ module ibex_core import ibex_pkg::*; #(
   output logic                         alert_minor_o,
   output logic                         alert_major_internal_o,
   output logic                         alert_major_bus_o,
-  output ibex_mubi_t                   core_busy_o
+  output ibex_mubi_t                   core_busy_o,
+  output logic [31:0]                  current_pc_o,
+  input  logic                         ext_stall_i 
 );
 
   localparam int unsigned PMPNumChan      = 3;
@@ -368,6 +370,7 @@ module ibex_core import ibex_pkg::*; #(
   // for RVFI
   logic        illegal_insn_id, unused_illegal_insn_id; // ID stage sees an illegal instruction
 
+  assign current_pc_o = pc_id;
   //////////////////////
   // Clock management //
   //////////////////////
@@ -685,7 +688,8 @@ module ibex_core import ibex_pkg::*; #(
     .perf_dside_wait_o(perf_dside_wait),
     .perf_mul_wait_o  (perf_mul_wait),
     .perf_div_wait_o  (perf_div_wait),
-    .instr_id_done_o  (instr_id_done)
+    .instr_id_done_o  (instr_id_done),
+    .ext_stall_i
   );
 
   // for RVFI only

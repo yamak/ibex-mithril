@@ -108,8 +108,9 @@ module ibex_controller #(
   // performance monitors
   output logic                  perf_jump_o,             // we are executing a jump
                                                          // instruction (j, jr, jal, jalr)
-  output logic                  perf_tbranch_o           // we are executing a taken branch
+  output logic                  perf_tbranch_o,          // we are executing a taken branch
                                                          // instruction
+  input  logic                  ext_stall_i
 );
   import ibex_pkg::*;
 
@@ -858,7 +859,7 @@ module ibex_controller #(
   // If high current instruction cannot complete this cycle. Either because it needs more cycles to
   // finish (stall_id_i) or because the writeback stage cannot accept it yet (stall_wb_i). If there
   // is no writeback stage stall_wb_i is a constant 0.
-  assign stall = stall_id_i | stall_wb_i;
+  assign stall = stall_id_i | stall_wb_i | ext_stall_i;
 
   // signal to IF stage that ID stage is ready for next instr
   assign id_in_ready_o = ~stall & ~halt_if & ~retain_id;

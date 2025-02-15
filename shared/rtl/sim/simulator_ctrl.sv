@@ -69,7 +69,7 @@ module simulator_ctrl #(
           CHAR_OUT_ADDR: begin
             if (be_i[0]) begin
               $fwrite(log_fd, "%c", wdata_i[7:0]);
-
+              $write("%c", wdata_i[7:0]);
               if(FlushOnChar) begin
                 $fflush(log_fd);
               end

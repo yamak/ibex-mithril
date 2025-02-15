@@ -402,6 +402,8 @@ module ibex_lockstep import ibex_pkg::*; #(
     .debug_req_i         (shadow_inputs_q[0].debug_req),
     .crash_dump_o        (shadow_outputs_d.crash_dump),
     .double_fault_seen_o (shadow_outputs_d.double_fault_seen),
+    .current_pc_o        (),
+    .ext_stall_i (),
 
 `ifdef RVFI
     .rvfi_valid                (),
