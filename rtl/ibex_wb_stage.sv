@@ -42,6 +42,10 @@ module ibex_wb_stage #(
   input  logic [31:0]              rf_wdata_id_i,
   input  logic                     rf_we_id_i,
 
+  input  logic                     pac_reg_addr_i,
+  input  logic [31:0]              pac_reg_wdata_i,
+  input  logic                     pac_reg_we_i,
+
   input  logic                     dummy_instr_id_i,
 
   input  logic [31:0]              rf_wdata_lsu_i,
@@ -52,6 +56,10 @@ module ibex_wb_stage #(
   output logic [4:0]               rf_waddr_wb_o,
   output logic [31:0]              rf_wdata_wb_o,
   output logic                     rf_we_wb_o,
+
+  output logic                     pac_reg_addr_wb_o,
+  output logic [31:0]              pac_reg_wdata_wb_o,
+  output logic                     pac_reg_we_wb_o,
 
   output logic                     dummy_instr_wb_o,
 
@@ -72,6 +80,9 @@ module ibex_wb_stage #(
     logic [31:0]    rf_wdata_wb_q;
     logic           rf_we_wb_q;
     logic [4:0]     rf_waddr_wb_q;
+    logic           pac_reg_addr_wb_q;
+    logic           pac_reg_we_wb_q;
+    logic [31:0]    pac_reg_wdata_wb_q;
 
     logic           wb_done;
 
@@ -110,6 +121,9 @@ module ibex_wb_stage #(
           wb_pc_q         <= '0;
           wb_compressed_q <= '0;
           wb_count_q      <= '0;
+          pac_reg_addr_wb_q <= '0;
+          pac_reg_we_wb_q <= '0;
+          pac_reg_wdata_wb_q <= '0;
         end else if (en_wb_i) begin
           rf_we_wb_q      <= rf_we_id_i;
           rf_waddr_wb_q   <= rf_waddr_id_i;
@@ -118,6 +132,9 @@ module ibex_wb_stage #(
           wb_pc_q         <= pc_id_i;
           wb_compressed_q <= instr_is_compressed_id_i;
           wb_count_q      <= instr_perf_count_id_i;
+          pac_reg_addr_wb_q <= pac_reg_addr_i;
+          pac_reg_we_wb_q <= pac_reg_we_i;
+          pac_reg_wdata_wb_q <= pac_reg_wdata_i;
         end
       end
     end else begin : g_wb_regs_nr
@@ -130,6 +147,9 @@ module ibex_wb_stage #(
           wb_pc_q         <= pc_id_i;
           wb_compressed_q <= instr_is_compressed_id_i;
           wb_count_q      <= instr_perf_count_id_i;
+          pac_reg_addr_wb_q <= pac_reg_addr_i;
+          pac_reg_we_wb_q <= pac_reg_we_i;
+          pac_reg_wdata_wb_q <= pac_reg_wdata_i;
         end
       end
     end
@@ -137,6 +157,9 @@ module ibex_wb_stage #(
     assign rf_waddr_wb_o         = rf_waddr_wb_q;
     assign rf_wdata_wb_mux[0]    = rf_wdata_wb_q;
     assign rf_wdata_wb_mux_we[0] = rf_we_wb_q & wb_valid_q;
+    assign pac_reg_addr_wb_o     = pac_reg_addr_wb_q;
+    assign pac_reg_we_wb_o       = pac_reg_we_wb_q;
+    assign pac_reg_wdata_wb_o    = pac_reg_wdata_wb_q;
 
     assign ready_wb_o = ~wb_valid_q | wb_done;
 
@@ -168,6 +191,8 @@ module ibex_wb_stage #(
 
     // For FI hardening, only forward LSU write enable if we're actually waiting for it.
     assign rf_wdata_wb_mux_we[1] = outstanding_load_wb_o & rf_we_lsu_i;
+
+
 
     if (DummyInstructions) begin : g_dummy_instr_wb
       logic dummy_instr_wb_q;
@@ -201,6 +226,9 @@ module ibex_wb_stage #(
     assign rf_wdata_wb_mux[0]    = rf_wdata_id_i;
     assign rf_wdata_wb_mux_we[0] = rf_we_id_i;
     assign rf_wdata_wb_mux_we[1] = rf_we_lsu_i;
+    assign pac_reg_addr_wb_o     = pac_reg_addr_i;
+    assign pac_reg_we_wb_o       = pac_reg_we_i;
+    assign pac_reg_wdata_wb_o    = pac_reg_wdata_i;
 
     assign dummy_instr_wb_o = dummy_instr_id_i;
 

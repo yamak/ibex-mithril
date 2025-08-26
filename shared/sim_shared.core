@@ -16,6 +16,7 @@ filesets:
       - ./rtl/bus.sv
       - ./rtl/sim/simulator_ctrl.sv
       - ./rtl/timer.sv
+      - ./rtl/qarma64_enc_core.sv
     file_type: systemVerilogSource
 
 targets:

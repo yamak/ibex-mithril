@@ -67,7 +67,8 @@ package ibex_pkg;
     OPCODE_BRANCH   = 7'h63,
     OPCODE_JALR     = 7'h67,
     OPCODE_JAL      = 7'h6f,
-    OPCODE_SYSTEM   = 7'h73
+    OPCODE_SYSTEM   = 7'h73,
+    OPCODE_PAC      = 7'h0b // Mithril PAC. custom-0
   } opcode_e;
 
 
@@ -192,6 +193,11 @@ package ibex_pkg;
     MD_OP_REM
   } md_op_e;
 
+  typedef enum logic [1:0] {
+    PAC_SW,
+    PAC_LW
+  } pac_op_e;
+
 
   //////////////////////////////////
   // Control and status registers //
@@ -263,7 +269,8 @@ package ibex_pkg;
     IMM_B_U,
     IMM_B_J,
     IMM_B_INCR_PC,
-    IMM_B_INCR_ADDR
+    IMM_B_INCR_ADDR,
+    IMM_B_PAC
   } imm_b_sel_e;
 
   // Regfile write data selection
@@ -348,6 +355,8 @@ package ibex_pkg;
     '{irq_ext: 1'b0, irq_int: 1'b0, lower_cause: 5'd08};
   localparam exc_cause_t ExcCauseEcallMMode =
     '{irq_ext: 1'b0, irq_int: 1'b0, lower_cause: 5'd11};
+  localparam exc_cause_t ExcCauseSecurityViolation =
+    '{irq_ext: 1'b0, irq_int: 1'b0, lower_cause: 5'd12};
 
   // Internal NMI cause
   typedef enum logic [4:0] {
@@ -587,7 +596,13 @@ package ibex_pkg;
     CSR_MHPMCOUNTER30H = 12'hB9E,
     CSR_MHPMCOUNTER31H = 12'hB9F,
     CSR_CPUCTRLSTS     = 12'h7C0,
-    CSR_SECURESEED     = 12'h7C1
+    CSR_SECURESEED     = 12'h7C1,
+    
+    // Mithril PAC CSRs (Custom Machine-mode range)
+    CSR_MITHRIL_PAC_K0  = 12'hBC0,
+    CSR_MITHRIL_PAC_K1  = 12'hBC1,
+    CSR_MITHRIL_PAC_K2  = 12'hBC2,
+    CSR_MITHRIL_PAC_K3  = 12'hBC3
   } csr_num_e;
 
   // CSR pmp-related offsets

@@ -35,6 +35,8 @@ filesets:
       - rtl/ibex_wb_stage.sv
       - rtl/ibex_dummy_instr.sv
       - rtl/ibex_core.sv
+      - rtl/mithril_pac_unit.sv
+      - rtl/mithril_pac_regs.sv
       - rtl/ibex_pmp_reset_default.svh: {is_include_file: true}
     file_type: systemVerilogSource
 

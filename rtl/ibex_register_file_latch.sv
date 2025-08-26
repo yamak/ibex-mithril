@@ -41,7 +41,14 @@ module ibex_register_file_latch #(
   input  logic                 we_a_i,
 
   // This indicates whether spurious WE or non-one-hot encoded raddr are detected.
-  output logic                 err_o
+  output logic                 err_o,
+  // Outputs for Mithril PAC
+  output logic [DataWidth-1:0] ra_o, 
+  output logic [DataWidth-1:0] sp_o, 
+  output logic [DataWidth-1:0] s0_o, 
+  output logic [DataWidth-1:0] s1_o, 
+  output logic [DataWidth-1:0] s2_o, 
+  output logic [DataWidth-1:0] s3_o 
 );
 
   localparam int unsigned ADDR_WIDTH = RV32E ? 4 : 5;
@@ -289,6 +296,14 @@ module ibex_register_file_latch #(
 
     assign mem[0] = WordZeroVal;
   end
+
+  // Assign outputs for Mithril PAC
+  assign ra_o = mem[1]; // Register x1 (ra)
+  assign sp_o = mem[2]; // Register x2 (sp)
+  assign s0_o = mem[8]; // Register x8 (s0)
+  assign s1_o = mem[9]; // Register x9 (s1)
+  assign s2_o = mem[18]; // Register x18 (s2)
+  assign s3_o = mem[19]; // Register x19 (s3)
 
 `ifdef VERILATOR
   initial begin

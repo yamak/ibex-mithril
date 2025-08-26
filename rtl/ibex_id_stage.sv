@@ -186,7 +186,17 @@ module ibex_id_stage #(
   output logic                      perf_mul_wait_o,
   output logic                      perf_div_wait_o,
   output logic                      instr_id_done_o,
-  input logic                       ext_stall_i
+  input logic                       mithril_ext_stall_i,
+
+  // Mithril PAC control out / results in 
+  output logic                      mithril_pac_calc_o,
+  output logic                      mithril_pac_lw_inflight_o,
+  output logic [21:0]               mithril_pac_site_id_o,
+  output logic                      mithril_pac_verify_o,
+  input  logic [31:0]               mithril_pac_lo_i,
+  input  logic [31:0]               mithril_pac_hi_i,
+  output logic                      mithril_pac_reg_waddr_id_o,
+  input logic                       mithril_sec_violation_i
 );
 
   import ibex_pkg::*;
@@ -236,6 +246,7 @@ module ibex_id_stage #(
   logic [31:0] imm_b_type;
   logic [31:0] imm_u_type;
   logic [31:0] imm_j_type;
+  logic [31:0] imm_pac_type;
   logic [31:0] zimm_rs1_type;
 
   logic [31:0] imm_a;       // contains the immediate for operand b
@@ -284,7 +295,7 @@ module ibex_id_stage #(
   logic        lsu_we;
   logic [1:0]  lsu_type;
   logic        lsu_sign_ext;
-  logic        lsu_req, lsu_req_dec;
+  logic        lsu_req, lsu_req_dec,lsu_req_dec_raw;
   logic        data_req_allowed;
 
   // CSR control
@@ -293,15 +304,31 @@ module ibex_id_stage #(
   logic [31:0] alu_operand_a;
   logic [31:0] alu_operand_b;
 
+  logic ret_match;
+  logic ret_instr_seen_q;
+  logic mithril_pac_sw_dec;
+  logic mithril_pac_lw_dec;
+  logic [21:0] mithril_pac_site_id;
+  logic [31:0] mithril_pac_lo;
+  logic [31:0] mithril_pac_hi;
+  logic [31:0] mithril_pac_lsu_wdata;
+  logic mithril_pac_lsu_addr_incr_q;
+  logic mithril_pac_sw_started_q;
+  logic mithril_pac_sw_instr_first_cycle;
+  logic stall_mithril_pac;
+  logic mithril_pac_lsu_first_beat_done_q;
+
+
   /////////////
   // LSU Mux //
   /////////////
 
   // Misaligned loads/stores result in two aligned loads/stores, compute second address
-  assign alu_op_a_mux_sel = lsu_addr_incr_req_i ? OP_A_FWD        : alu_op_a_mux_sel_dec;
-  assign alu_op_b_mux_sel = lsu_addr_incr_req_i ? OP_B_IMM        : alu_op_b_mux_sel_dec;
-  assign imm_b_mux_sel    = lsu_addr_incr_req_i ? IMM_B_INCR_ADDR : imm_b_mux_sel_dec;
+  assign alu_op_a_mux_sel = (lsu_addr_incr_req_i | mithril_pac_lsu_addr_incr_q) ? OP_A_FWD        : alu_op_a_mux_sel_dec;
 
+  assign alu_op_b_mux_sel = (lsu_addr_incr_req_i | mithril_pac_lsu_addr_incr_q) ? OP_B_IMM        : alu_op_b_mux_sel_dec;
+  assign imm_b_mux_sel    = (lsu_addr_incr_req_i | mithril_pac_lsu_addr_incr_q) ? IMM_B_INCR_ADDR : imm_b_mux_sel_dec;
+  
   ///////////////////
   // Operand MUXES //
   ///////////////////
@@ -349,6 +376,7 @@ module ibex_id_stage #(
         IMM_B_U:         imm_b = imm_u_type;
         IMM_B_INCR_PC:   imm_b = instr_is_compressed_i ? 32'h2 : 32'h4;
         IMM_B_INCR_ADDR: imm_b = 32'h4;
+        IMM_B_PAC:       imm_b = imm_pac_type; // Pass pac immediate to ALU
         default:         imm_b = 32'h4;
       endcase
     end
@@ -357,7 +385,8 @@ module ibex_id_stage #(
         IMM_B_S,
         IMM_B_U,
         IMM_B_INCR_PC,
-        IMM_B_INCR_ADDR})
+        IMM_B_INCR_ADDR,
+        IMM_B_PAC})
   end else begin : g_nobtalu
     op_a_sel_e  unused_a_mux_sel;
     imm_b_sel_e unused_b_mux_sel;
@@ -377,6 +406,7 @@ module ibex_id_stage #(
         IMM_B_J:         imm_b = imm_j_type;
         IMM_B_INCR_PC:   imm_b = instr_is_compressed_i ? 32'h2 : 32'h4;
         IMM_B_INCR_ADDR: imm_b = 32'h4;
+        IMM_B_PAC:       imm_b = imm_pac_type; // Pass pac immediate to ALU
         default:         imm_b = 32'h4;
       endcase
     end
@@ -387,7 +417,8 @@ module ibex_id_stage #(
         IMM_B_U,
         IMM_B_J,
         IMM_B_INCR_PC,
-        IMM_B_INCR_ADDR})
+        IMM_B_INCR_ADDR,
+        IMM_B_PAC})
   end
 
   // ALU MUX for Operand B
@@ -424,6 +455,8 @@ module ibex_id_stage #(
       default:   rf_wdata_id_o = result_ex_i;
     endcase
   end
+
+
 
   /////////////
   // Decoder //
@@ -467,7 +500,7 @@ module ibex_id_stage #(
     .imm_u_type_o   (imm_u_type),
     .imm_j_type_o   (imm_j_type),
     .zimm_rs1_type_o(zimm_rs1_type),
-
+    .imm_pac_type_o(imm_pac_type),
     // register file
     .rf_wdata_sel_o(rf_wdata_sel),
     .rf_we_o       (rf_we_dec),
@@ -497,14 +530,19 @@ module ibex_id_stage #(
     .csr_op_o    (csr_op_o),
 
     // LSU
-    .data_req_o           (lsu_req_dec),
+    .data_req_o           (lsu_req_dec_raw),
     .data_we_o            (lsu_we),
     .data_type_o          (lsu_type),
     .data_sign_extension_o(lsu_sign_ext),
 
     // jump/branches
     .jump_in_dec_o  (jump_in_dec),
-    .branch_in_dec_o(branch_in_dec)
+    .branch_in_dec_o(branch_in_dec),
+
+    // Mithril PAC
+    .pac_sw_o(mithril_pac_sw_dec),
+    .pac_lw_o(mithril_pac_lw_dec),
+    .pac_site_id_o(mithril_pac_site_id)
   );
 
   /////////////////////////////////
@@ -646,20 +684,98 @@ module ibex_id_stage #(
     // Performance Counters
     .perf_jump_o   (perf_jump_o),
     .perf_tbranch_o(perf_tbranch_o),
-    .ext_stall_i
+    .mithril_ext_stall_i,
+    .mithril_sec_violation_i
   );
 
-  assign multdiv_en_dec   = mult_en_dec | div_en_dec;
+      // Mithril PAC: Detect function returns for authentication
+  assign ret_match = jump_in_dec && (rf_waddr_id_o == 5'd0) && 
+                           (rf_raddr_a_o == 5'd1) && (imm_i_type == 32'd0) || mret_insn_dec;
 
+
+  
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if(~rst_ni) begin
+      ret_instr_seen_q <= 1'b0;
+    end else begin
+      if(ret_match  && instr_executing)
+        ret_instr_seen_q <= 1'b1;
+      if(instr_done || flush_id || ~instr_valid_i || mithril_sec_violation_i) 
+        ret_instr_seen_q <= 1'b0;
+    end
+  end
+
+  assign mithril_pac_verify_o = ret_match & ~ret_instr_seen_q & instr_first_cycle;
+
+  assign mithril_pac_lo     = mithril_pac_lo_i;
+  assign mithril_pac_hi     = mithril_pac_hi_i;
+
+  // We need to start stalling immediately when we detect the first cycle of a PAC store instruction.
+  // Although PAC calculation takes 2 cycles, we only need to explicitly stall for the first cycle.
+  // For the second cycle, stall_mem will be automatically asserted due to lsu_req being high,
+  // which provides the necessary stall for completing the PAC operation.
+  assign stall_mithril_pac  = mithril_pac_sw_instr_first_cycle;
+
+  assign mithril_pac_calc_o         = mithril_pac_sw_instr_first_cycle;
+  assign mithril_pac_lw_inflight_o  = mithril_pac_lw_dec;
+  assign mithril_pac_site_id_o      = mithril_pac_site_id;
+  // Because mithril_pac_sw_dec stay high until the end of the instruction, 
+  //we need to use this signal to detect the first cycle of the store instruction.
+  assign mithril_pac_sw_instr_first_cycle = mithril_pac_sw_dec & ~mithril_pac_sw_started_q; 
+  always_ff @( posedge clk_i or negedge rst_ni ) begin : pac_store_flop
+    if(~rst_ni) begin
+      mithril_pac_lsu_addr_incr_q <= 1'b0;
+      mithril_pac_sw_started_q <= 1'b0;
+      mithril_pac_lsu_first_beat_done_q <= 1'b0;
+    end else begin
+      // For writing the upper 32 bits of the PAC, we set mithril_pac_lsu_addr_incr_q high
+      // when lsu_req_done_i is asserted. This modifies the ALU inputs accordingly to handle
+      // the upper word write.
+      if((mithril_pac_lw_dec || mithril_pac_sw_dec) && instr_executing && lsu_req_done_i && ~flush_id) begin
+          if(~mithril_pac_lsu_first_beat_done_q)
+            mithril_pac_lsu_addr_incr_q <= 1'b1;
+          mithril_pac_lsu_first_beat_done_q <= 1'b1;
+      end
+      if (mithril_pac_sw_instr_first_cycle & instr_executing) begin
+        mithril_pac_sw_started_q <= 1'b1;
+      end
+      if(mithril_pac_lsu_addr_incr_q && lsu_resp_valid_i) begin
+        mithril_pac_lsu_addr_incr_q <= 1'b0;
+      end
+      if(instr_done || flush_id || ~instr_valid_i) begin
+        mithril_pac_lsu_addr_incr_q <= 1'b0; 
+        mithril_pac_sw_started_q    <= 1'b0;
+        mithril_pac_lsu_first_beat_done_q <= 1'b0;
+      end
+    end
+  end
+  
+  assign mithril_pac_lsu_wdata = mithril_pac_lsu_addr_incr_q ? mithril_pac_hi : mithril_pac_lo ;
+
+  // Rationale: waddr drives the PAC regs LO/HI index during PAC load.
+  // - mithril_pac_lsu_first_beat_done_q is set when the first grant (first beat) is accepted.
+  // - mithril_pac_lsu_addr_incr_q goes high after the first grant and is cleared on the second response.
+  //   Thus, while incr_q is high, we are progressing towards the second beat; when it goes low again,
+  //   the second word (HI) has just been received. Using (first_beat_done_q & ~incr_q) selects HI only
+  //   after the second response, whereas LO is selected earlier when incr_q is still high.
+  assign mithril_pac_reg_waddr_id_o = mithril_pac_lw_dec ? (mithril_pac_lsu_first_beat_done_q & ~mithril_pac_lsu_addr_incr_q ? 1'b1 : 1'b0) : 1'b0;
+
+
+  assign multdiv_en_dec  = mult_en_dec | div_en_dec;
+  // For pacswlp instruction, lsu_req_dec_raw signal from decoder is directly asserted high.
+  // However, LSU request (lsu_req) should not be generated until PAC calculation is completed.
+  // Therefore, stall_mithril_pac signal is used to keep lsu_req low during PAC calculation period.
+  // stall_mithril_pac stays high exactly during this calculation period.
+  assign lsu_req_dec     = (stall_mithril_pac ? 1'b0 : lsu_req_dec_raw);
   assign lsu_req         = instr_executing ? data_req_allowed & lsu_req_dec  : 1'b0;
   assign mult_en_id      = instr_executing ? mult_en_dec                     : 1'b0;
   assign div_en_id       = instr_executing ? div_en_dec                      : 1'b0;
 
   assign lsu_req_o               = lsu_req;
-  assign lsu_we_o                = lsu_we;
+  assign lsu_we_o                = mithril_pac_sw_dec ? (stall_mithril_pac ? 1'b0 : lsu_we) : lsu_we;
   assign lsu_type_o              = lsu_type;
   assign lsu_sign_ext_o          = lsu_sign_ext;
-  assign lsu_wdata_o             = rf_rdata_b_fwd;
+  assign lsu_wdata_o             = mithril_pac_sw_dec ? mithril_pac_lsu_wdata : rf_rdata_b_fwd;
   // csr_op_en_o is set when CSR access should actually happen.
   // csv_access_o is set when CSR access instruction is present and is used to compute whether a CSR
   // access is illegal. A combinational loop would be created if csr_op_en_o was used along (as
@@ -677,6 +793,8 @@ module ibex_id_stage #(
   assign multdiv_signed_mode_ex_o    = multdiv_signed_mode;
   assign multdiv_operand_a_ex_o      = rf_rdata_a_fwd;
   assign multdiv_operand_b_ex_o      = rf_rdata_b_fwd;
+
+
 
   ////////////////////////
   // Branch set control //
@@ -890,7 +1008,7 @@ module ibex_id_stage #(
   // Stall ID/EX stage for reason that relates to instruction in ID/EX, update assertion below if
   // modifying this.
   assign stall_id = stall_ld_hz | stall_mem | stall_multdiv | stall_jump | stall_branch |
-                      stall_alu;
+                      stall_alu | stall_mithril_pac;
 
   // Generally illegal instructions have no reason to stall, however they must still stall waiting
   // for outstanding memory requests so exceptions related to them take priority over the illegal
@@ -1020,13 +1138,13 @@ module ibex_id_stage #(
                                (outstanding_memory_access | stall_ld_hz);
   end else begin : gen_no_stall_mem
 
-    assign multicycle_done = lsu_req_dec ? lsu_resp_valid_i : ex_valid_i;
+    assign multicycle_done = lsu_req_dec ? lsu_resp_valid_i & ~mithril_pac_lsu_addr_incr_q : ex_valid_i;
 
-    assign data_req_allowed = instr_first_cycle;
+    assign data_req_allowed = instr_first_cycle | mithril_pac_lsu_addr_incr_q;
 
     // Without Writeback Stage always stall the first cycle of a load/store.
     // Then stall until it is complete
-    assign stall_mem = instr_valid_i & (lsu_req_dec & (~lsu_resp_valid_i | instr_first_cycle));
+    assign stall_mem = instr_valid_i & (lsu_req_dec & (~lsu_resp_valid_i | instr_first_cycle | mithril_pac_lsu_addr_incr_q));
 
     // No load hazards without Writeback Stage
     assign stall_ld_hz   = 1'b0;

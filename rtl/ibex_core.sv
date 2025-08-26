@@ -158,7 +158,14 @@ module ibex_core import ibex_pkg::*; #(
   output logic                         alert_major_bus_o,
   output ibex_mubi_t                   core_busy_o,
   output logic [31:0]                  current_pc_o,
-  input  logic                         ext_stall_i 
+  // Mithril Signals
+  input logic                          mithril_ext_stall_i ,
+  input logic [31:0]                   ra_reg_i,
+  input logic [31:0]                   sp_reg_i,
+  input logic [31:0]                   s0_reg_i,
+  input logic [31:0]                   s1_reg_i,
+  input logic [31:0]                   s2_reg_i,
+  input logic [31:0]                   s3_reg_i
 );
 
   localparam int unsigned PMPNumChan      = 3;
@@ -369,6 +376,12 @@ module ibex_core import ibex_pkg::*; #(
 
   // for RVFI
   logic        illegal_insn_id, unused_illegal_insn_id; // ID stage sees an illegal instruction
+
+  logic [31:0] mithril_pac_k0;
+  logic [31:0] mithril_pac_k1;
+  logic [31:0] mithril_pac_k2;
+  logic [31:0] mithril_pac_k3;
+  logic        mithril_pac_en;
 
   assign current_pc_o = pc_id;
   //////////////////////
@@ -689,7 +702,17 @@ module ibex_core import ibex_pkg::*; #(
     .perf_mul_wait_o  (perf_mul_wait),
     .perf_div_wait_o  (perf_div_wait),
     .instr_id_done_o  (instr_id_done),
-    .ext_stall_i
+    // Mithril signals
+    .mithril_ext_stall_i,
+    // PAC core integration
+    .mithril_pac_calc_o       (mithril_pac_calc),
+    .mithril_pac_lw_inflight_o(mithril_pac_lw_inflight),
+    .mithril_pac_site_id_o    (mithril_pac_site_id),
+    .mithril_pac_verify_o     (mithril_pac_verify),
+    .mithril_pac_lo_i         (mithril_pac_lo_core),
+    .mithril_pac_hi_i         (mithril_pac_hi_core),
+    .mithril_pac_reg_waddr_id_o(pac_regs_waddr_id),
+    .mithril_sec_violation_i(mithril_pac_mismatch)
   );
 
   // for RVFI only
@@ -798,6 +821,76 @@ module ibex_core import ibex_pkg::*; #(
     .perf_store_o(perf_store)
   );
 
+  // ------------------------------
+  // Mithril PAC integration in core
+  // ------------------------------
+  logic        mithril_pac_calc;
+  logic        mithril_pac_lw_inflight;
+  logic [21:0] mithril_pac_site_id;
+  logic        mithril_pac_verify;
+
+  logic [31:0] mithril_pac_lo_core;
+  logic [31:0] mithril_pac_hi_core;
+  logic [63:0] mithril_current_pac;
+
+  logic        pac_regs_we_id;
+  logic        pac_regs_waddr_id; // 0=lo, 1=hi
+  logic        pac_regs_we_wb;
+  logic        pac_regs_waddr_wb;
+  logic [31:0] pac_regs_wdata_wb;
+
+  logic [31:0] latched_sp;
+  logic        trap_ctx_q;
+  logic        trap_ctx_o;
+  logic        mithril_pac_mismatch;
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      trap_ctx_q <= 1'b0;
+    end else begin
+      if (csr_save_cause)                         
+        trap_ctx_q <= 1'b1; 
+      if (csr_restore_mret_id || csr_restore_dret_id) 
+        trap_ctx_q <= 1'b0; 
+    end
+  end
+  assign trap_ctx_o = trap_ctx_q;
+  
+  assign pac_regs_we_id = rf_we_lsu & mithril_pac_lw_inflight;
+  mithril_pac_regs u_mithril_pac_regs (
+    .clk_i        (clk_i),
+    .rst_ni       (rst_ni),
+    .waddr_i      (pac_regs_waddr_wb),
+    .wdata_i      (pac_regs_wdata_wb),
+    .sp_i         (sp_reg_i),
+    .we_i         (pac_regs_we_wb),
+    .trap_ctx_i   (trap_ctx_o), 
+    .pac_o        (mithril_current_pac),
+    .latched_sp_o (latched_sp)
+  );
+
+
+  mithril_pac_unit u_mithril_pac_unit (
+    .clk_i        (clk_i),
+    .rst_ni       (rst_ni),
+    .key          ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
+    .ra_i         (ra_reg_i),
+    .sp_i         (mithril_pac_verify ? latched_sp : sp_reg_i),
+    .s0_i         (s0_reg_i),
+    .s1_i         (s1_reg_i),
+    .s2_i         (s2_reg_i),
+    .s3_i         (s3_reg_i),
+    .site_id_i    (mithril_pac_site_id),
+    .trap_ctx_i   (trap_ctx_o),
+    .calculate_i  (mithril_pac_calc),
+    .verify_i     (mithril_pac_verify & mithril_pac_en),
+    .pac_i        (mithril_current_pac),
+    .pac_lo_o     (mithril_pac_lo_core),
+    .pac_hi_o     (mithril_pac_hi_core),
+    .valid_o      (),
+    .pac_mismatch_o(mithril_pac_mismatch)
+  );
+
+
   ibex_wb_stage #(
     .ResetAll         (ResetAll),
     .WritebackStage   (WritebackStage),
@@ -824,17 +917,24 @@ module ibex_core import ibex_pkg::*; #(
     .rf_waddr_id_i(rf_waddr_id),
     .rf_wdata_id_i(rf_wdata_id),
     .rf_we_id_i   (rf_we_id),
+    .pac_reg_addr_i (pac_regs_waddr_id),
+    .pac_reg_we_i   (pac_regs_we_id),
+    .pac_reg_wdata_i(rf_wdata_lsu),
 
     .dummy_instr_id_i(dummy_instr_id),
 
     .rf_wdata_lsu_i(rf_wdata_lsu),
-    .rf_we_lsu_i   (rf_we_lsu),
+    .rf_we_lsu_i   (~pac_regs_we_wb & rf_we_lsu),
 
     .rf_wdata_fwd_wb_o(rf_wdata_fwd_wb),
 
     .rf_waddr_wb_o(rf_waddr_wb),
     .rf_wdata_wb_o(rf_wdata_wb),
     .rf_we_wb_o   (rf_we_wb),
+
+    .pac_reg_addr_wb_o(pac_regs_waddr_wb),
+    .pac_reg_we_wb_o  (pac_regs_we_wb),
+    .pac_reg_wdata_wb_o(pac_regs_wdata_wb),
 
     .dummy_instr_wb_o(dummy_instr_wb),
 
@@ -1111,7 +1211,12 @@ module ibex_core import ibex_pkg::*; #(
     .mem_store_i                (perf_store),
     .dside_wait_i               (perf_dside_wait),
     .mul_wait_i                 (perf_mul_wait),
-    .div_wait_i                 (perf_div_wait)
+    .div_wait_i                 (perf_div_wait),
+    .mithril_pac_k0_o           (mithril_pac_k0),
+    .mithril_pac_k1_o           (mithril_pac_k1),
+    .mithril_pac_k2_o           (mithril_pac_k2),
+    .mithril_pac_k3_o           (mithril_pac_k3),
+    .mithril_pac_en_o           (mithril_pac_en)
   );
 
   // These assertions are in top-level as instr_valid_id required as the enable term

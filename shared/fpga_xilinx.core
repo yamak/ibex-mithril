@@ -14,6 +14,7 @@ filesets:
       - rtl/ram_1p.sv
       - rtl/bus.sv
       - rtl/timer.sv
+      - rtl/qarma64_enc_core.sv
     file_type: systemVerilogSource
 
 targets:

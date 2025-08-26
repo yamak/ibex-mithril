@@ -89,7 +89,7 @@ module ibex_top import ibex_pkg::*; #(
   output crash_dump_t                  crash_dump_o,
   output logic                         double_fault_seen_o,
   output logic [31:0]                  current_pc_o,
-  input  logic                         ext_stall_i,
+  input  logic                         mithril_ext_stall_i,
 
   // RISC-V Formal Interface
   // Does not comply with the coding standards of _i/_o suffixes, but follows
@@ -203,6 +203,14 @@ module ibex_top import ibex_pkg::*; #(
   logic                        scramble_req_d, scramble_req_q;
 
   ibex_mubi_t                  fetch_enable_buf;
+
+  // Mithril PAC: Function call and return detection
+  logic [RegFileDataWidth-1:0] ra_reg; // Register x1 (ra)
+  logic [RegFileDataWidth-1:0] sp_reg; // Register x2 (sp)
+  logic [RegFileDataWidth-1:0] s0_reg; // Register x3 (s0)
+  logic [RegFileDataWidth-1:0] s1_reg; // Register x4 (s1)
+  logic [RegFileDataWidth-1:0] s2_reg; // Register x5 (s2)
+  logic [RegFileDataWidth-1:0] s3_reg; // Register x6 (s3)
 
   /////////////////////
   // Main clock gate //
@@ -368,7 +376,13 @@ module ibex_top import ibex_pkg::*; #(
     .crash_dump_o,
     .double_fault_seen_o,
     .current_pc_o,
-    .ext_stall_i,
+    .mithril_ext_stall_i,
+    .ra_reg_i(ra_reg),
+    .sp_reg_i(sp_reg),
+    .s0_reg_i(s0_reg),
+    .s1_reg_i(s1_reg),
+    .s2_reg_i(s2_reg),
+    .s3_reg_i(s3_reg),
 `ifdef RVFI
     .rvfi_valid,
     .rvfi_order,
@@ -442,7 +456,13 @@ module ibex_top import ibex_pkg::*; #(
       .waddr_a_i(rf_waddr_wb),
       .wdata_a_i(rf_wdata_wb_ecc),
       .we_a_i   (rf_we_wb),
-      .err_o    (rf_alert_major_internal)
+      .err_o    (rf_alert_major_internal),
+      .ra_o (ra_reg),
+      .sp_o (sp_reg),
+      .s0_o (s0_reg),
+      .s1_o (s1_reg),
+      .s2_o (s2_reg),
+      .s3_o (s3_reg)
     );
   end else if (RegFile == RegFileFPGA) begin : gen_regfile_fpga
     ibex_register_file_fpga #(
@@ -468,7 +488,13 @@ module ibex_top import ibex_pkg::*; #(
       .waddr_a_i(rf_waddr_wb),
       .wdata_a_i(rf_wdata_wb_ecc),
       .we_a_i   (rf_we_wb),
-      .err_o    (rf_alert_major_internal)
+      .err_o    (rf_alert_major_internal),
+      .ra_o (ra_reg),
+      .sp_o (sp_reg),
+      .s0_o (s0_reg),
+      .s1_o (s1_reg),
+      .s2_o (s2_reg),
+      .s3_o (s3_reg)
     );
   end else if (RegFile == RegFileLatch) begin : gen_regfile_latch
     ibex_register_file_latch #(
@@ -494,7 +520,13 @@ module ibex_top import ibex_pkg::*; #(
       .waddr_a_i(rf_waddr_wb),
       .wdata_a_i(rf_wdata_wb_ecc),
       .we_a_i   (rf_we_wb),
-      .err_o    (rf_alert_major_internal)
+      .err_o    (rf_alert_major_internal),
+      .ra_o (ra_reg),
+      .sp_o (sp_reg),
+      .s0_o (s0_reg),
+      .s1_o (s1_reg),
+      .s2_o (s2_reg),
+      .s3_o (s3_reg)
     );
   end
 

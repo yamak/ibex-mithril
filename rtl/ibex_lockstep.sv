@@ -403,7 +403,14 @@ module ibex_lockstep import ibex_pkg::*; #(
     .crash_dump_o        (shadow_outputs_d.crash_dump),
     .double_fault_seen_o (shadow_outputs_d.double_fault_seen),
     .current_pc_o        (),
-    .ext_stall_i (),
+    .mithril_ext_stall_i (),
+    .ra_reg_i            (),
+    .sp_reg_i            (),
+    .s0_reg_i            (),
+    .s1_reg_i            (),
+    .s2_reg_i            (),
+    .s3_reg_i            (),
+
 
 `ifdef RVFI
     .rvfi_valid                (),

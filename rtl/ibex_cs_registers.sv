@@ -118,7 +118,14 @@ module ibex_cs_registers #(
   input  logic                 mem_store_i,                 // store to memory in this cycle
   input  logic                 dside_wait_i,                // core waiting for the dside
   input  logic                 mul_wait_i,                  // core waiting for multiply
-  input  logic                 div_wait_i                   // core waiting for divide
+  input  logic                 div_wait_i,                  // core waiting for divide
+  
+  // Mithril PAC interface  
+  output logic [31:0]          mithril_pac_k0_o,           // PAC Key 0 (write-once)
+  output logic [31:0]          mithril_pac_k1_o,           // PAC Key 1 (write-once)
+  output logic [31:0]          mithril_pac_k2_o,           // PAC Key 2 (write-once)
+  output logic [31:0]          mithril_pac_k3_o,           // PAC Key 3 (write-once)
+  output logic                 mithril_pac_en_o            // PAC enable
 );
 
   import ibex_pkg::*;
@@ -240,6 +247,15 @@ module ibex_cs_registers #(
   logic        mstack_en;
   logic [31:0] mstack_epc_q, mstack_epc_d;
   exc_cause_t  mstack_cause_q, mstack_cause_d;
+
+  // Mithril PAC CSRs with write-once semantics
+  logic [31:0] mithril_pac_k0_q, mithril_pac_k1_q;
+  logic [31:0] mithril_pac_k2_q, mithril_pac_k3_q;
+  logic        mithril_pac_k0_en, mithril_pac_k1_en;
+  logic        mithril_pac_k2_en, mithril_pac_k3_en;
+  // Write-once flags - once written, keys cannot be modified
+  logic        mithril_pac_k0_written_q, mithril_pac_k1_written_q;
+  logic        mithril_pac_k2_written_q, mithril_pac_k3_written_q;
 
   // PMP Signals
   logic [31:0]                 pmp_addr_rdata  [PMP_MAX_REGIONS];
@@ -541,6 +557,12 @@ module ibex_cs_registers #(
         csr_rdata_int = '0;
       end
 
+      // Mithril PAC CSRs (keys are write-once, read always allowed)
+      CSR_MITHRIL_PAC_K0:  csr_rdata_int = 32'h0; // Keys write-only.
+      CSR_MITHRIL_PAC_K1:  csr_rdata_int = 32'h0;
+      CSR_MITHRIL_PAC_K2:  csr_rdata_int = 32'h0;
+      CSR_MITHRIL_PAC_K3:  csr_rdata_int = 32'h0;
+
       default: begin
         illegal_csr = 1'b1;
       end
@@ -591,6 +613,12 @@ module ibex_cs_registers #(
     mstack_d.mpp   = mstatus_q.mpp;
     mstack_epc_d   = mepc_q;
     mstack_cause_d = mcause_q;
+
+    // Mithril PAC enable signals (write-once)
+    mithril_pac_k0_en  = 1'b0;
+    mithril_pac_k1_en  = 1'b0;
+    mithril_pac_k2_en  = 1'b0;
+    mithril_pac_k3_en  = 1'b0;
 
     mcountinhibit_we = 1'b0;
     mhpmcounter_we   = '0;
@@ -703,6 +731,19 @@ module ibex_cs_registers #(
           cpuctrlsts_part_we = 1'b1;
         end
 
+        // Mithril PAC CSRs (write-once protection)
+        CSR_MITHRIL_PAC_K0: begin
+          mithril_pac_k0_en = ~mithril_pac_k0_written_q; // Only allow write if not written before
+        end
+        CSR_MITHRIL_PAC_K1: begin
+          mithril_pac_k1_en = ~mithril_pac_k1_written_q;
+        end
+        CSR_MITHRIL_PAC_K2: begin
+          mithril_pac_k2_en = ~mithril_pac_k2_written_q;
+        end
+        CSR_MITHRIL_PAC_K3: begin
+          mithril_pac_k3_en = ~mithril_pac_k3_written_q;
+        end
         default:;
       endcase
     end
@@ -847,6 +888,12 @@ module ibex_cs_registers #(
   assign debug_ebreakm_o     = dcsr_q.ebreakm;
   assign debug_ebreaku_o     = dcsr_q.ebreaku;
 
+  // Mithril PAC outputs
+  assign mithril_pac_k0_o  = mithril_pac_k0_q;
+  assign mithril_pac_k1_o  = mithril_pac_k1_q;
+  assign mithril_pac_k2_o  = mithril_pac_k2_q;
+  assign mithril_pac_k3_o  = mithril_pac_k3_q;
+
   // Qualify incoming interrupt requests in mip CSR with mie CSR for controller and to re-enable
   // clock upon WFI (must be purely combinational).
   assign irqs_o        = mip & mie_q;
@@ -874,6 +921,24 @@ module ibex_cs_registers #(
     .rd_data_o (mstatus_q),
     .rd_error_o(mstatus_err)
   );
+
+  // Write-once flags for Mithril PAC keys
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      mithril_pac_k0_written_q <= 1'b0;
+      mithril_pac_k1_written_q <= 1'b0;
+      mithril_pac_k2_written_q <= 1'b0;
+      mithril_pac_k3_written_q <= 1'b0;
+    end else begin
+      if (mithril_pac_k0_en) mithril_pac_k0_written_q <= 1'b1;
+      if (mithril_pac_k1_en) mithril_pac_k1_written_q <= 1'b1;
+      if (mithril_pac_k2_en) mithril_pac_k2_written_q <= 1'b1;
+      if (mithril_pac_k3_en) mithril_pac_k3_written_q <= 1'b1;
+    end
+  end
+
+  assign mithril_pac_en_o = mithril_pac_k0_written_q | mithril_pac_k1_written_q | mithril_pac_k2_written_q | mithril_pac_k3_written_q;
+
 
   // MEPC
   ibex_csr #(
@@ -1067,6 +1132,67 @@ module ibex_cs_registers #(
     .rd_data_o (mstack_cause_q),
     .rd_error_o()
   );
+
+  // -----------------
+  // Mithril PAC CSRs
+  // -----------------
+
+  // MITHRIL_PAC_K0 (write-once)
+  ibex_csr #(
+    .Width     (32),
+    .ShadowCopy(1'b0),
+    .ResetValue('0)
+  ) u_mithril_pac_k0_csr (
+    .clk_i     (clk_i),
+    .rst_ni    (rst_ni),
+    .wr_data_i (csr_wdata_int),
+    .wr_en_i   (mithril_pac_k0_en),
+    .rd_data_o (mithril_pac_k0_q),
+    .rd_error_o()
+  );
+
+  // MITHRIL_PAC_K1 (write-once)
+  ibex_csr #(
+    .Width     (32),
+    .ShadowCopy(1'b0),
+    .ResetValue('0)
+  ) u_mithril_pac_k1_csr (
+    .clk_i     (clk_i),
+    .rst_ni    (rst_ni),
+    .wr_data_i (csr_wdata_int),
+    .wr_en_i   (mithril_pac_k1_en),
+    .rd_data_o (mithril_pac_k1_q),
+    .rd_error_o()
+  );
+
+  // MITHRIL_PAC_K2 (write-once)
+  ibex_csr #(
+    .Width     (32),
+    .ShadowCopy(1'b0),
+    .ResetValue('0)
+  ) u_mithril_pac_k2_csr (
+    .clk_i     (clk_i),
+    .rst_ni    (rst_ni),
+    .wr_data_i (csr_wdata_int),
+    .wr_en_i   (mithril_pac_k2_en),
+    .rd_data_o (mithril_pac_k2_q),
+    .rd_error_o()
+  );
+
+  // MITHRIL_PAC_K3 (write-once)
+  ibex_csr #(
+    .Width     (32),
+    .ShadowCopy(1'b0),
+    .ResetValue('0)
+  ) u_mithril_pac_k3_csr (
+    .clk_i     (clk_i),
+    .rst_ni    (rst_ni),
+    .wr_data_i (csr_wdata_int),
+    .wr_en_i   (mithril_pac_k3_en),
+    .rd_data_o (mithril_pac_k3_q),
+    .rd_error_o()
+  );
+
 
   // -----------------
   // PMP registers

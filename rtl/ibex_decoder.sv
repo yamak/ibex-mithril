@@ -52,6 +52,7 @@ module ibex_decoder #(
   output logic [31:0]           imm_b_type_o,
   output logic [31:0]           imm_u_type_o,
   output logic [31:0]           imm_j_type_o,
+  output logic [31:0]           imm_pac_type_o,
   output logic [31:0]           zimm_rs1_type_o,
 
   // register file
@@ -94,7 +95,12 @@ module ibex_decoder #(
 
   // jump/branches
   output logic                 jump_in_dec_o,         // jump is being calculated in ALU
-  output logic                 branch_in_dec_o
+  output logic                 branch_in_dec_o,
+
+  // Mithril PAC
+  output logic                 pac_sw_o,
+  output logic                 pac_lw_o,
+  output logic [21:0]          pac_site_id_o
 );
 
   import ibex_pkg::*;
@@ -137,7 +143,7 @@ module ibex_decoder #(
   assign imm_b_type_o = { {19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0 };
   assign imm_u_type_o = { instr[31:12], 12'b0 };
   assign imm_j_type_o = { {12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0 };
-
+  assign imm_pac_type_o = 32'b0; // For now, Pac immediate always zero
   // immediate for CSR manipulation (zero extended)
   assign zimm_rs1_type_o = { 27'b0, instr_rs1 }; // rs1
 
@@ -166,7 +172,8 @@ module ibex_decoder #(
   assign instr_rs1 = instr[19:15];
   assign instr_rs2 = instr[24:20];
   assign instr_rs3 = instr[31:27];
-  assign rf_raddr_a_o = (use_rs3_q & ~instr_first_cycle_i) ? instr_rs3 : instr_rs1; // rs3 / rs1
+  assign rf_raddr_a_o = (pac_sw_o | pac_lw_o) ? 5'h02 : // sp
+                        (use_rs3_q & ~instr_first_cycle_i) ? instr_rs3 : instr_rs1; // rs3 / rs1
   assign rf_raddr_b_o = instr_rs2; // rs2
 
   // destination register
@@ -231,6 +238,8 @@ module ibex_decoder #(
     dret_insn_o           = 1'b0;
     ecall_insn_o          = 1'b0;
     wfi_insn_o            = 1'b0;
+    pac_sw_o = 1'b0;
+    pac_lw_o = 1'b0;
 
     opcode                = opcode_e'(instr[6:0]);
 
@@ -333,6 +342,23 @@ module ibex_decoder #(
             illegal_insn = 1'b1;
           end
         endcase
+      end
+
+      OPCODE_PAC: begin
+        pac_site_id_o = {instr[31:15], instr[11:7]};
+        rf_ren_a_o = 1'b1;
+        data_req_o = 1'b1;
+        data_we_o  = 1'b0;
+        unique case (instr[14:12])
+        3'b000:  begin 
+          pac_sw_o  = 1'b1; // pacswsp
+          data_we_o = 1'b1;           // STOR
+        end
+        3'b001:  begin
+           pac_lw_o  = 1'b1; // paclwsp
+        end
+        default: illegal_insn = 1'b1;
+      endcase
       end
 
       /////////
@@ -1180,6 +1206,12 @@ module ibex_decoder #(
           end
         end
 
+      end
+      OPCODE_PAC: begin
+        alu_op_a_mux_sel_o  = OP_A_REG_A;
+        alu_op_b_mux_sel_o  = OP_B_IMM;
+        imm_b_mux_sel_o     = IMM_B_PAC;
+        alu_operator_o      = ALU_ADD;
       end
       default: ;
     endcase

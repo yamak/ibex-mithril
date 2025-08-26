@@ -110,7 +110,8 @@ module ibex_controller #(
                                                          // instruction (j, jr, jal, jalr)
   output logic                  perf_tbranch_o,          // we are executing a taken branch
                                                          // instruction
-  input  logic                  ext_stall_i
+  input  logic                  mithril_ext_stall_i,
+  input  logic                  mithril_sec_violation_i
 );
   import ibex_pkg::*;
 
@@ -123,6 +124,7 @@ module ibex_controller #(
   logic store_err_q, store_err_d;
   logic exc_req_q, exc_req_d;
   logic illegal_insn_q, illegal_insn_d;
+  logic mithril_sec_violation_q, mithril_sec_violation_d;
 
   // Of the various exception/fault signals, which one takes priority in FLUSH and hence controls
   // what happens next (setting exc_cause, csr_mtval etc)
@@ -132,6 +134,7 @@ module ibex_controller #(
   logic ebrk_insn_prio;
   logic store_err_prio;
   logic load_err_prio;
+  logic mithril_sec_violation_prio;
 
   logic stall;
   logic halt_if;
@@ -212,13 +215,15 @@ module ibex_controller #(
   // the FLUSH state so the cycle following exc_req_q won't remain set for an
   // exception request that has just been handled.
   // All terms in this expression are qualified by instr_valid_i
-  assign exc_req_d = (ecall_insn | ebrk_insn | illegal_insn_d | instr_fetch_err) &
+  assign exc_req_d = (ecall_insn | ebrk_insn | illegal_insn_d | instr_fetch_err | mithril_sec_violation_d) &
                      (ctrl_fsm_cs != FLUSH);
 
   // LSU exception requests
   assign exc_req_lsu = store_err_i | load_err_i;
 
   assign id_exception_o = exc_req_d & ~wb_exception_o;
+
+  assign mithril_sec_violation_d = mithril_sec_violation_i & instr_valid_i;
 
   // special requests: special instructions, pipeline flushes, exceptions...
   // All terms in these expressions are qualified by instr_valid_i except exc_req_lsu which can come
@@ -246,16 +251,20 @@ module ibex_controller #(
       ebrk_insn_prio       = 0;
       store_err_prio       = 0;
       load_err_prio        = 0;
+      mithril_sec_violation_prio = 0;
 
       // Note that with the writeback stage store/load errors occur on the instruction in writeback,
       // all other exception/faults occur on the instruction in ID/EX. The faults from writeback
       // must take priority as that instruction is architecurally ordered before the one in ID/EX.
+
       if (store_err_q) begin
         store_err_prio = 1'b1;
       end else if (load_err_q) begin
         load_err_prio  = 1'b1;
       end else if (instr_fetch_err) begin
         instr_fetch_err_prio = 1'b1;
+      end else if (mithril_sec_violation_q) begin
+        mithril_sec_violation_prio = 1'b1;
       end else if (illegal_insn_q) begin
         illegal_insn_prio = 1'b1;
       end else if (ecall_insn) begin
@@ -275,9 +284,11 @@ module ibex_controller #(
       ebrk_insn_prio       = 0;
       store_err_prio       = 0;
       load_err_prio        = 0;
-
+      mithril_sec_violation_prio = 0;
       if (instr_fetch_err) begin
         instr_fetch_err_prio = 1'b1;
+      end else if (mithril_sec_violation_q) begin
+        mithril_sec_violation_prio = 1'b1;
       end else if (illegal_insn_q) begin
         illegal_insn_prio = 1'b1;
       end else if (ecall_insn) begin
@@ -288,13 +299,14 @@ module ibex_controller #(
         store_err_prio = 1'b1;
       end else if (load_err_q) begin
         load_err_prio  = 1'b1;
-      end
+      end 
     end
     assign wb_exception_o = 1'b0;
   end
 
   `ASSERT_IF(IbexExceptionPrioOnehot,
              $onehot({instr_fetch_err_prio,
+                      mithril_sec_violation_prio,
                       illegal_insn_prio,
                       ecall_insn_prio,
                       ebrk_insn_prio,
@@ -792,6 +804,10 @@ module ibex_controller #(
               exc_cause_o = ExcCauseLoadAccessFault;
               csr_mtval_o = lsu_addr_last_i;
             end
+            mithril_sec_violation_prio: begin
+              exc_cause_o = ExcCauseSecurityViolation;
+              csr_mtval_o = pc_id_i;
+            end
             default: ;
           endcase
         end else begin
@@ -859,7 +875,7 @@ module ibex_controller #(
   // If high current instruction cannot complete this cycle. Either because it needs more cycles to
   // finish (stall_id_i) or because the writeback stage cannot accept it yet (stall_wb_i). If there
   // is no writeback stage stall_wb_i is a constant 0.
-  assign stall = stall_id_i | stall_wb_i | ext_stall_i;
+  assign stall = stall_id_i | stall_wb_i | mithril_ext_stall_i;
 
   // signal to IF stage that ID stage is ready for next instr
   assign id_in_ready_o = ~stall & ~halt_if & ~retain_id;
@@ -883,6 +899,7 @@ module ibex_controller #(
       store_err_q             <= 1'b0;
       exc_req_q               <= 1'b0;
       illegal_insn_q          <= 1'b0;
+      mithril_sec_violation_q <= 1'b0;
     end else begin
       ctrl_fsm_cs             <= ctrl_fsm_ns;
       nmi_mode_q              <= nmi_mode_d;
@@ -893,6 +910,7 @@ module ibex_controller #(
       store_err_q             <= store_err_d;
       exc_req_q               <= exc_req_d;
       illegal_insn_q          <= illegal_insn_d;
+      mithril_sec_violation_q <= mithril_sec_violation_d;
     end
   end
 
