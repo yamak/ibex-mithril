@@ -240,6 +240,7 @@ module ibex_decoder #(
     wfi_insn_o            = 1'b0;
     pac_sw_o = 1'b0;
     pac_lw_o = 1'b0;
+    pac_site_id_o        = 22'b0;
 
     opcode                = opcode_e'(instr[6:0]);
 
@@ -352,7 +353,7 @@ module ibex_decoder #(
         unique case (instr[14:12])
         3'b000:  begin 
           pac_sw_o  = 1'b1; // pacswsp
-          data_we_o = 1'b1;           // STOR
+          data_we_o = 1'b1;          
         end
         3'b001:  begin
            pac_lw_o  = 1'b1; // paclwsp

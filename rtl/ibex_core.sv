@@ -712,7 +712,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_lo_i         (mithril_pac_lo_core),
     .mithril_pac_hi_i         (mithril_pac_hi_core),
     .mithril_pac_reg_waddr_id_o(pac_regs_waddr_id),
-    .mithril_sec_violation_i(mithril_pac_mismatch)
+    .mithril_sec_violation_i(mithril_pac_mismatch),
+    .mithril_sec_violation_ack_o(mithril_pac_mismatch_ack)
   );
 
   // for RVFI only
@@ -843,6 +844,7 @@ module ibex_core import ibex_pkg::*; #(
   logic        trap_ctx_q;
   logic        trap_ctx_o;
   logic        mithril_pac_mismatch;
+  logic        mithril_pac_mismatch_ack;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       trap_ctx_q <= 1'b0;
@@ -887,9 +889,9 @@ module ibex_core import ibex_pkg::*; #(
     .pac_lo_o     (mithril_pac_lo_core),
     .pac_hi_o     (mithril_pac_hi_core),
     .valid_o      (),
-    .pac_mismatch_o(mithril_pac_mismatch)
+    .pac_mismatch_o(mithril_pac_mismatch),
+    .pac_mismatch_ack_i(mithril_pac_mismatch_ack)
   );
-
 
   ibex_wb_stage #(
     .ResetAll         (ResetAll),

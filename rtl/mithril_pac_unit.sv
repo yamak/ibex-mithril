@@ -22,7 +22,8 @@ module mithril_pac_unit (
   output logic [31:0] pac_lo_o,
   output logic [31:0] pac_hi_o,
   output logic valid_o,
-  output logic pac_mismatch_o
+  output logic pac_mismatch_o,
+  input logic pac_mismatch_ack_i
 );
 
 logic [63:0] tweak;
@@ -41,6 +42,8 @@ typedef enum {
 
 state_t state_reg;
 state_t state_next;
+logic pac_mismatch_q, pac_mismatch_d;
+
 
 
 qarma64_enc_core qarma64_enc_core_inst (
@@ -61,19 +64,21 @@ always_ff @(posedge clk_i or negedge rst_ni) begin
     site_id_shadow_reg <= 22'b0;
     state_reg <= IDLE;
     trap_ctx_q <= 1'b0;
+    pac_mismatch_q <= 1'b0;
   end
   else begin
     state_reg <= state_next;
+    pac_mismatch_q <= pac_mismatch_d;
     // Latch domain at operation start to keep bank selection consistent
-    if (state_reg == IDLE && (calculate_i || verify_i))
+    if (state_reg == IDLE && (calculate_i || verify_i)) begin
       trap_ctx_q <= trap_ctx_i;
       // Site ID write follows current domain; trap_ctx_q latched in the same cycle
-      if (trap_ctx_q) begin
+      if (trap_ctx_i) begin
         site_id_shadow_reg <= site_id_i;
       end else begin
         site_id_reg <= site_id_i;
       end
-  
+    end
   end
 end
 
@@ -81,7 +86,10 @@ always_comb begin
   state_next = state_reg;
   start_qarma = 1'b0;
   tweak = 64'b0;
-  pac_mismatch_o = 1'b0;
+  pac_mismatch_d = pac_mismatch_q;
+  if(pac_mismatch_ack_i || ((state_reg == IDLE) && (calculate_i || verify_i))) begin
+    pac_mismatch_d = 1'b0;
+  end
   case (state_reg)
     IDLE: begin
       if (calculate_i) begin
@@ -105,9 +113,9 @@ always_comb begin
       if(qarma_valid) begin
         state_next = IDLE;
         if (qarma_result == pac_i) begin
-          pac_mismatch_o = 1'b0;
+          pac_mismatch_d = 1'b0;
         end else begin
-          pac_mismatch_o = 1'b1;
+          pac_mismatch_d = 1'b1;
         end
       end 
     end
@@ -117,6 +125,7 @@ end
 assign pac_lo_o = qarma_result[31:0];
 assign pac_hi_o = qarma_result[63:32];
 assign valid_o = qarma_valid;
+assign pac_mismatch_o = pac_mismatch_q | pac_mismatch_d;
 
 endmodule
 

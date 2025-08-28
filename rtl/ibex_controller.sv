@@ -111,7 +111,8 @@ module ibex_controller #(
   output logic                  perf_tbranch_o,          // we are executing a taken branch
                                                          // instruction
   input  logic                  mithril_ext_stall_i,
-  input  logic                  mithril_sec_violation_i
+  input  logic                  mithril_sec_violation_i,
+  output logic                  mithril_sec_violation_ack_o
 );
   import ibex_pkg::*;
 
@@ -223,7 +224,7 @@ module ibex_controller #(
 
   assign id_exception_o = exc_req_d & ~wb_exception_o;
 
-  assign mithril_sec_violation_d = mithril_sec_violation_i & instr_valid_i;
+  assign mithril_sec_violation_d = mithril_sec_violation_i & instr_valid_i & ~mithril_sec_violation_ack_o;
 
   // special requests: special instructions, pipeline flushes, exceptions...
   // All terms in these expressions are qualified by instr_valid_i except exc_req_lsu which can come
@@ -503,6 +504,9 @@ module ibex_controller #(
     perf_jump_o            = 1'b0;
 
     controller_run_o       = 1'b0;
+    mithril_sec_violation_ack_o = 1'b0;
+
+    
 
     unique case (ctrl_fsm_cs)
       RESET: begin
@@ -805,6 +809,7 @@ module ibex_controller #(
               csr_mtval_o = lsu_addr_last_i;
             end
             mithril_sec_violation_prio: begin
+              mithril_sec_violation_ack_o = 1'b1;
               exc_cause_o = ExcCauseSecurityViolation;
               csr_mtval_o = pc_id_i;
             end

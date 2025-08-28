@@ -196,7 +196,8 @@ module ibex_id_stage #(
   input  logic [31:0]               mithril_pac_lo_i,
   input  logic [31:0]               mithril_pac_hi_i,
   output logic                      mithril_pac_reg_waddr_id_o,
-  input logic                       mithril_sec_violation_i
+  input logic                       mithril_sec_violation_i,
+  output logic                      mithril_sec_violation_ack_o
 );
 
   import ibex_pkg::*;
@@ -685,14 +686,13 @@ module ibex_id_stage #(
     .perf_jump_o   (perf_jump_o),
     .perf_tbranch_o(perf_tbranch_o),
     .mithril_ext_stall_i,
-    .mithril_sec_violation_i
+    .mithril_sec_violation_i,
+    .mithril_sec_violation_ack_o
   );
 
       // Mithril PAC: Detect function returns for authentication
-  assign ret_match = jump_in_dec && (rf_waddr_id_o == 5'd0) && 
-                           (rf_raddr_a_o == 5'd1) && (imm_i_type == 32'd0) || mret_insn_dec;
-
-
+  assign ret_match = (jump_in_dec && (rf_waddr_id_o == 5'd0) && 
+                           (rf_raddr_a_o == 5'd1) && (imm_i_type == 32'd0) || mret_insn_dec);
   
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if(~rst_ni) begin
@@ -700,7 +700,7 @@ module ibex_id_stage #(
     end else begin
       if(ret_match  && instr_executing)
         ret_instr_seen_q <= 1'b1;
-      if(instr_done || flush_id || ~instr_valid_i || mithril_sec_violation_i) 
+      if(ret_instr_seen_q && ~ret_match) 
         ret_instr_seen_q <= 1'b0;
     end
   end
