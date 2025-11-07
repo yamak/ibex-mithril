@@ -706,7 +706,7 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_ext_stall_i,
     // PAC core integration
     .mithril_pac_calc_o       (mithril_pac_calc),
-    .mithril_pac_lw_inflight_o(mithril_pac_lw_inflight),
+    .mithril_pac_regs_we_o    (mithril_pac_regs_we),
     .mithril_pac_site_id_o    (mithril_pac_site_id),
     .mithril_pac_verify_o     (mithril_pac_verify),
     .mithril_pac_lo_i         (mithril_pac_lo_core),
@@ -826,7 +826,7 @@ module ibex_core import ibex_pkg::*; #(
   // Mithril PAC integration in core
   // ------------------------------
   logic        mithril_pac_calc;
-  logic        mithril_pac_lw_inflight;
+  logic        mithril_pac_regs_we;
   logic [21:0] mithril_pac_site_id;
   logic        mithril_pac_verify;
 
@@ -857,7 +857,7 @@ module ibex_core import ibex_pkg::*; #(
   end
   assign trap_ctx_o = trap_ctx_q;
   
-  assign pac_regs_we_id = rf_we_lsu & mithril_pac_lw_inflight;
+  assign pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
   mithril_pac_regs u_mithril_pac_regs (
     .clk_i        (clk_i),
     .rst_ni       (rst_ni),

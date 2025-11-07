@@ -98,8 +98,10 @@ module ibex_decoder #(
   output logic                 branch_in_dec_o,
 
   // Mithril PAC
-  output logic                 pac_sw_o,
-  output logic                 pac_lw_o,
+  output logic                 pac_start_o,
+  output logic                 pac_end_o,
+  output logic                 pac_store_o,
+  output logic                 pac_load_o,
   output logic [21:0]          pac_site_id_o
 );
 
@@ -143,7 +145,7 @@ module ibex_decoder #(
   assign imm_b_type_o = { {19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0 };
   assign imm_u_type_o = { instr[31:12], 12'b0 };
   assign imm_j_type_o = { {12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0 };
-  assign imm_pac_type_o = 32'b0; // For now, Pac immediate always zero
+  //assign imm_pac_type_o = 32'b0; // For now, Pac immediate always zero
   // immediate for CSR manipulation (zero extended)
   assign zimm_rs1_type_o = { 27'b0, instr_rs1 }; // rs1
 
@@ -172,7 +174,7 @@ module ibex_decoder #(
   assign instr_rs1 = instr[19:15];
   assign instr_rs2 = instr[24:20];
   assign instr_rs3 = instr[31:27];
-  assign rf_raddr_a_o = (pac_sw_o | pac_lw_o) ? 5'h02 : // sp
+  assign rf_raddr_a_o = (pac_start_o | pac_end_o | pac_store_o | pac_load_o) ? 5'h02 : // sp
                         (use_rs3_q & ~instr_first_cycle_i) ? instr_rs3 : instr_rs1; // rs3 / rs1
   assign rf_raddr_b_o = instr_rs2; // rs2
 
@@ -238,8 +240,10 @@ module ibex_decoder #(
     dret_insn_o           = 1'b0;
     ecall_insn_o          = 1'b0;
     wfi_insn_o            = 1'b0;
-    pac_sw_o = 1'b0;
-    pac_lw_o = 1'b0;
+    pac_start_o = 1'b0;
+    pac_end_o = 1'b0;
+    pac_store_o = 1'b0;
+    pac_load_o = 1'b0;
     pac_site_id_o        = 22'b0;
 
     opcode                = opcode_e'(instr[6:0]);
@@ -350,13 +354,23 @@ module ibex_decoder #(
         rf_ren_a_o = 1'b1;
         data_req_o = 1'b1;
         data_we_o  = 1'b0;
+        imm_pac_type_o = 32'b0;
         unique case (instr[14:12])
         3'b000:  begin 
-          pac_sw_o  = 1'b1; // pacswsp
+          pac_start_o  = 1'b1; // pac_start
           data_we_o = 1'b1;          
         end
         3'b001:  begin
-           pac_lw_o  = 1'b1; // paclwsp
+           pac_end_o  = 1'b1; // pac_end
+        end
+        3'b010:  begin
+          pac_store_o  = 1'b1; // pac_store
+          data_we_o = 1'b1;       
+          imm_pac_type_o = { {20{instr[31]}}, instr[31:25], instr[11:7] };
+        end
+        3'b011:  begin
+          pac_load_o  = 1'b1; // pac_load
+          imm_pac_type_o = { {20{instr[31]}}, instr[31:20] };
         end
         default: illegal_insn = 1'b1;
       endcase

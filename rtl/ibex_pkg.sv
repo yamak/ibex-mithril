@@ -194,8 +194,8 @@
  } md_op_e;
 
  typedef enum logic [1:0] {
-   PAC_SW,
-   PAC_LW
+   PAC_START,
+   PAC_END
  } pac_op_e;
 
 

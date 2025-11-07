@@ -190,7 +190,7 @@ module ibex_id_stage #(
 
   // Mithril PAC control out / results in 
   output logic                      mithril_pac_calc_o,
-  output logic                      mithril_pac_lw_inflight_o,
+  output logic                      mithril_pac_regs_we_o,
   output logic [21:0]               mithril_pac_site_id_o,
   output logic                      mithril_pac_verify_o,
   input  logic [31:0]               mithril_pac_lo_i,
@@ -307,15 +307,17 @@ module ibex_id_stage #(
 
   logic ret_match;
   logic ret_instr_seen_q;
-  logic mithril_pac_sw_dec;
-  logic mithril_pac_lw_dec;
+  logic mithril_pac_start_dec;
+  logic mithril_pac_end_dec;
+  logic mithril_pac_store_dec;
+  logic mithril_pac_load_dec;
   logic [21:0] mithril_pac_site_id;
   logic [31:0] mithril_pac_lo;
   logic [31:0] mithril_pac_hi;
   logic [31:0] mithril_pac_lsu_wdata;
   logic mithril_pac_lsu_addr_incr_q;
-  logic mithril_pac_sw_started_q;
-  logic mithril_pac_sw_instr_first_cycle;
+  logic mithril_pac_start_started_q;
+  logic mithril_pac_start_instr_first_cycle;
   logic stall_mithril_pac;
   logic mithril_pac_lsu_first_beat_done_q;
 
@@ -541,8 +543,10 @@ module ibex_id_stage #(
     .branch_in_dec_o(branch_in_dec),
 
     // Mithril PAC
-    .pac_sw_o(mithril_pac_sw_dec),
-    .pac_lw_o(mithril_pac_lw_dec),
+    .pac_start_o(mithril_pac_start_dec),
+    .pac_end_o(mithril_pac_end_dec),
+    .pac_store_o(mithril_pac_store_dec),
+    .pac_load_o(mithril_pac_load_dec),
     .pac_site_id_o(mithril_pac_site_id)
   );
 
@@ -710,41 +714,42 @@ module ibex_id_stage #(
   assign mithril_pac_lo     = mithril_pac_lo_i;
   assign mithril_pac_hi     = mithril_pac_hi_i;
 
-  // We need to start stalling immediately when we detect the first cycle of a PAC store instruction.
+  // We need to start stalling immediately when we detect the first cycle of a PAC start instruction.
   // Although PAC calculation takes 2 cycles, we only need to explicitly stall for the first cycle.
   // For the second cycle, stall_mem will be automatically asserted due to lsu_req being high,
   // which provides the necessary stall for completing the PAC operation.
-  assign stall_mithril_pac  = mithril_pac_sw_instr_first_cycle;
+  assign stall_mithril_pac  = mithril_pac_start_instr_first_cycle;
 
-  assign mithril_pac_calc_o         = mithril_pac_sw_instr_first_cycle;
-  assign mithril_pac_lw_inflight_o  = mithril_pac_lw_dec;
-  assign mithril_pac_site_id_o      = mithril_pac_site_id;
-  // Because mithril_pac_sw_dec stay high until the end of the instruction, 
-  //we need to use this signal to detect the first cycle of the store instruction.
-  assign mithril_pac_sw_instr_first_cycle = mithril_pac_sw_dec & ~mithril_pac_sw_started_q; 
-  always_ff @( posedge clk_i or negedge rst_ni ) begin : pac_store_flop
+  assign mithril_pac_calc_o          = mithril_pac_start_instr_first_cycle;
+  assign mithril_pac_regs_we_o       = mithril_pac_end_dec | mithril_pac_load_dec;
+  assign mithril_pac_site_id_o       = mithril_pac_site_id;
+  // Because mithril_pac_start_dec stay high until the end of the instruction, 
+  // we need to use this signal to detect the first cycle of the start instruction.
+  assign mithril_pac_start_instr_first_cycle = mithril_pac_start_dec & ~mithril_pac_start_started_q; 
+  always_ff @( posedge clk_i or negedge rst_ni ) begin : pac_start_flop
     if(~rst_ni) begin
       mithril_pac_lsu_addr_incr_q <= 1'b0;
-      mithril_pac_sw_started_q <= 1'b0;
+      mithril_pac_start_started_q <= 1'b0;
       mithril_pac_lsu_first_beat_done_q <= 1'b0;
     end else begin
       // For writing the upper 32 bits of the PAC, we set mithril_pac_lsu_addr_incr_q high
       // when lsu_req_done_i is asserted. This modifies the ALU inputs accordingly to handle
       // the upper word write.
-      if((mithril_pac_lw_dec || mithril_pac_sw_dec) && instr_executing && lsu_req_done_i && ~flush_id) begin
+      if((mithril_pac_end_dec || mithril_pac_start_dec || mithril_pac_store_dec || mithril_pac_load_dec) && 
+        instr_executing && lsu_req_done_i && ~flush_id) begin
           if(~mithril_pac_lsu_first_beat_done_q)
             mithril_pac_lsu_addr_incr_q <= 1'b1;
           mithril_pac_lsu_first_beat_done_q <= 1'b1;
       end
-      if (mithril_pac_sw_instr_first_cycle & instr_executing) begin
-        mithril_pac_sw_started_q <= 1'b1;
+      if (mithril_pac_start_instr_first_cycle && instr_executing) begin
+        mithril_pac_start_started_q <= 1'b1;
       end
       if(mithril_pac_lsu_addr_incr_q && lsu_resp_valid_i) begin
         mithril_pac_lsu_addr_incr_q <= 1'b0;
       end
       if(instr_done || flush_id || ~instr_valid_i) begin
         mithril_pac_lsu_addr_incr_q <= 1'b0; 
-        mithril_pac_sw_started_q    <= 1'b0;
+        mithril_pac_start_started_q    <= 1'b0;
         mithril_pac_lsu_first_beat_done_q <= 1'b0;
       end
     end
@@ -758,11 +763,11 @@ module ibex_id_stage #(
   //   Thus, while incr_q is high, we are progressing towards the second beat; when it goes low again,
   //   the second word (HI) has just been received. Using (first_beat_done_q & ~incr_q) selects HI only
   //   after the second response, whereas LO is selected earlier when incr_q is still high.
-  assign mithril_pac_reg_waddr_id_o = mithril_pac_lw_dec ? (mithril_pac_lsu_first_beat_done_q & ~mithril_pac_lsu_addr_incr_q ? 1'b1 : 1'b0) : 1'b0;
+  assign mithril_pac_reg_waddr_id_o = (mithril_pac_end_dec | mithril_pac_load_dec) ? (mithril_pac_lsu_first_beat_done_q & ~mithril_pac_lsu_addr_incr_q ? 1'b1 : 1'b0) : 1'b0;
 
 
   assign multdiv_en_dec  = mult_en_dec | div_en_dec;
-  // For pacswlp instruction, lsu_req_dec_raw signal from decoder is directly asserted high.
+  // For pac_start instruction, lsu_req_dec_raw signal from decoder is directly asserted high.
   // However, LSU request (lsu_req) should not be generated until PAC calculation is completed.
   // Therefore, stall_mithril_pac signal is used to keep lsu_req low during PAC calculation period.
   // stall_mithril_pac stays high exactly during this calculation period.
@@ -772,10 +777,10 @@ module ibex_id_stage #(
   assign div_en_id       = instr_executing ? div_en_dec                      : 1'b0;
 
   assign lsu_req_o               = lsu_req;
-  assign lsu_we_o                = mithril_pac_sw_dec ? (stall_mithril_pac ? 1'b0 : lsu_we) : lsu_we;
+  assign lsu_we_o                = (mithril_pac_start_dec | mithril_pac_store_dec) ? (stall_mithril_pac ? 1'b0 : lsu_we) : lsu_we;
   assign lsu_type_o              = lsu_type;
   assign lsu_sign_ext_o          = lsu_sign_ext;
-  assign lsu_wdata_o             = mithril_pac_sw_dec ? mithril_pac_lsu_wdata : rf_rdata_b_fwd;
+  assign lsu_wdata_o             = (mithril_pac_start_dec | mithril_pac_store_dec) ? mithril_pac_lsu_wdata : rf_rdata_b_fwd;
   // csr_op_en_o is set when CSR access should actually happen.
   // csv_access_o is set when CSR access instruction is present and is used to compute whether a CSR
   // access is illegal. A combinational loop would be created if csr_op_en_o was used along (as
