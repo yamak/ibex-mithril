@@ -163,9 +163,7 @@ module ibex_core import ibex_pkg::*; #(
   input logic [31:0]                   ra_reg_i,
   input logic [31:0]                   sp_reg_i,
   input logic [31:0]                   s0_reg_i,
-  input logic [31:0]                   s1_reg_i,
-  input logic [31:0]                   s2_reg_i,
-  input logic [31:0]                   s3_reg_i
+  input logic [31:0]                   s1_reg_i
 );
 
   localparam int unsigned PMPNumChan      = 3;
@@ -879,10 +877,8 @@ module ibex_core import ibex_pkg::*; #(
     .sp_i         (mithril_pac_verify ? latched_sp : sp_reg_i),
     .s0_i         (s0_reg_i),
     .s1_i         (s1_reg_i),
-    .s2_i         (s2_reg_i),
-    .s3_i         (s3_reg_i),
-    .site_id_i    (mithril_pac_site_id),
-    .trap_ctx_i   (trap_ctx_o),
+    .mepc_i       (csr_mepc),
+    .pac_msg_sel_i(pac_msg_sel),
     .calculate_i  (mithril_pac_calc),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
     .pac_i        (mithril_current_pac),

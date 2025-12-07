@@ -460,9 +460,7 @@ module ibex_top import ibex_pkg::*; #(
       .ra_o (ra_reg),
       .sp_o (sp_reg),
       .s0_o (s0_reg),
-      .s1_o (s1_reg),
-      .s2_o (s2_reg),
-      .s3_o (s3_reg)
+      .s1_o (s1_reg)
     );
   end else if (RegFile == RegFileFPGA) begin : gen_regfile_fpga
     ibex_register_file_fpga #(
