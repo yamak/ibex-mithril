@@ -42,7 +42,7 @@ module ibex_wb_stage #(
   input  logic [31:0]              rf_wdata_id_i,
   input  logic                     rf_we_id_i,
 
-  input  logic                     pac_reg_addr_i,
+  input  logic [4:0]               pac_reg_addr_i,
   input  logic [31:0]              pac_reg_wdata_i,
   input  logic                     pac_reg_we_i,
 
@@ -57,7 +57,7 @@ module ibex_wb_stage #(
   output logic [31:0]              rf_wdata_wb_o,
   output logic                     rf_we_wb_o,
 
-  output logic                     pac_reg_addr_wb_o,
+  output logic [4:0]               pac_reg_addr_wb_o,
   output logic [31:0]              pac_reg_wdata_wb_o,
   output logic                     pac_reg_we_wb_o,
 

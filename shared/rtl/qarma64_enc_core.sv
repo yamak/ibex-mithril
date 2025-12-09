@@ -403,14 +403,21 @@ always_comb begin
             end
         end
         STAGE2: begin
-            compute_stage2(key_i, tweak_stage_reg, is_stage_reg, is_stage_next, tweak_stage_next);
-            state_next = STAGE1;
+            if(start_i) begin
+                // If start_i is high, we are starting a new computation.
+                // Abort the current computation and start a new one.
+                compute_stage1(key_i, tweak_i, block_i, is_stage_next, tweak_stage_next); 
+            end 
+            else begin
+                compute_stage2(key_i, tweak_stage_reg, is_stage_reg, is_stage_next, tweak_stage_next);
+                state_next = STAGE1;
+            end
         end
     endcase
 end
 
 assign ready_o = (state_reg == STAGE1);
-assign valid_o = (state_reg == STAGE2);
+assign valid_o = (state_reg == STAGE2) && !start_i;
 assign result_o = (state_reg == STAGE2) ? is_stage_next : is_stage_reg;
 
 endmodule

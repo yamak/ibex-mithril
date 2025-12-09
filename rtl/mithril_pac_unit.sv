@@ -4,38 +4,40 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-module mithril_pac_unit
-  import ibex_pkg::*;
-(
+module mithril_pac_unit #(
+  parameter int NumRegs = 2
+)(
   input logic clk_i,
   input logic rst_ni,
   input logic [127:0] key_i,
   
-  // Register inputs for message/tweak
-  input logic [31:0] ra_i,
-  input logic [31:0] sp_i,
-  input logic [31:0] mepc_i,       // MEPC from CSR
   input logic [31:0] s0_i,
   input logic [31:0] s1_i,
   
   // Message source selection
-  input pac_msg_e pac_msg_sel_i,   // PAC_MSG_RA_SP or PAC_MSG_MEPC_SP
+  input logic [63:0] message_i,
   
   // Control signals
   input logic calculate_i,
   input logic verify_i,
-  input logic [63:0] pac_i,
   
-  // Outputs
-  output logic [31:0] pac_lo_o,
-  output logic [31:0] pac_hi_o,
   output logic valid_o,
   output logic pac_mismatch_o,
-  input logic pac_mismatch_ack_i
+  input logic pac_mismatch_ack_i,
+
+  // PAC registers interface (5-bit for instruction compatibility, internally truncated)
+  input  logic [4:0] current_result_reg_i,
+  
+  output logic [31:0] rdata_o,
+  input  logic [4:0] raddr_i,
+  input  logic [4:0] waddr_i,
+  input  logic [31:0] wdata_i,
+  input  logic we_i
 );
 
+localparam int PacRegAddrWidth = $clog2(NumRegs * 2);
+
 logic [63:0] tweak;
-logic [63:0] message;
 logic [63:0] qarma_result;
 logic qarma_valid;
 logic start_qarma;
@@ -49,20 +51,31 @@ typedef enum {
 state_t state_reg;
 state_t state_next;
 logic pac_mismatch_q, pac_mismatch_d;
+logic [PacRegAddrWidth-1:0] current_result_reg_q;
 
-// Message source selection mux
-always_comb begin
-  unique case (pac_msg_sel_i)
-    PAC_MSG_RA_SP:   message = {ra_i, sp_i};    // Message = {RA, SP}
-    PAC_MSG_MEPC_SP: message = {mepc_i, sp_i};  // Message = {MEPC, SP}
-    default:         message = {ra_i, sp_i};    // Default to RA+SP
-  endcase
-end
+
+  // Each pac register is 64 bits. Split into two 32-bit registers.
+  logic [31:0] pac_regs[2 * NumRegs];
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      for(int i = 0; i < NumRegs * 2; i++) begin
+        pac_regs[i] <= 32'b0;
+      end
+    end else if (we_i) begin
+      pac_regs[waddr_i[PacRegAddrWidth-1:0]] <= wdata_i;
+    end else if (qarma_valid) begin
+      pac_regs[current_result_reg_q] <= qarma_result[31:0];
+      pac_regs[current_result_reg_q + 1] <= qarma_result[63:32];
+    end
+  end
+
+  assign rdata_o = pac_regs[raddr_i[PacRegAddrWidth-1:0]];
 
 qarma64_enc_core qarma64_enc_core_inst (
     .clk_i(clk_i),
     .rst_ni(rst_ni),
-    .block_i(message),
+    .block_i(message_i),
     .key_i(key_i),
     .tweak_i(tweak),
     .start_i(start_qarma),
@@ -75,10 +88,15 @@ always_ff @(posedge clk_i or negedge rst_ni) begin
   if (!rst_ni) begin
     state_reg <= IDLE;
     pac_mismatch_q <= 1'b0;
+    current_result_reg_q <= '0; 
   end
   else begin
     state_reg <= state_next;
     pac_mismatch_q <= pac_mismatch_d;
+    if(calculate_i || verify_i) begin
+      // Truncate to PacRegAddrWidth and clear bit 0 to get base index of 64-bit PAC register
+      current_result_reg_q <= {current_result_reg_i[PacRegAddrWidth-1:1], 1'b0};
+    end
   end
 end
 
@@ -108,7 +126,7 @@ always_comb begin
     VERIFY_PAC: begin
       if(qarma_valid) begin
         state_next = IDLE;
-        if (qarma_result == pac_i) begin
+        if (qarma_result == {pac_regs[current_result_reg_q + 1], pac_regs[current_result_reg_q]}) begin
           pac_mismatch_d = 1'b0;
         end else begin
           pac_mismatch_d = 1'b1;
@@ -118,8 +136,6 @@ always_comb begin
   endcase
 end
 assign tweak = {s1_i, s0_i};
-assign pac_lo_o = qarma_result[31:0];
-assign pac_hi_o = qarma_result[63:32];
 assign valid_o = qarma_valid;
 assign pac_mismatch_o = pac_mismatch_q | pac_mismatch_d;
 
