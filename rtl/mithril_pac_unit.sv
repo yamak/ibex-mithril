@@ -25,12 +25,14 @@ module mithril_pac_unit #(
   output logic pac_mismatch_o,
   input logic pac_mismatch_ack_i,
 
-  // PAC registers interface (5-bit for instruction compatibility, internally truncated)
+  /* verilator lint_off UNUSED */
   input  logic [4:0] current_result_reg_i,
-  
-  output logic [31:0] rdata_o,
   input  logic [4:0] raddr_i,
   input  logic [4:0] waddr_i,
+  /* verilator lint_on UNUSED */
+
+  output logic [31:0] rdata_o,
+
   input  logic [31:0] wdata_i,
   input  logic we_i
 );

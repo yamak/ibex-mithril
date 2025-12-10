@@ -47,7 +47,7 @@ module ibex_register_file_ff #(
   output logic [DataWidth-1:0] ra_o,
   output logic [DataWidth-1:0] sp_o,
   output logic [DataWidth-1:0] s0_o,
-  output logic [DataWidth-1:0] s1_o,
+  output logic [DataWidth-1:0] s1_o
 );
 
   localparam int unsigned ADDR_WIDTH = RV32E ? 4 : 5;

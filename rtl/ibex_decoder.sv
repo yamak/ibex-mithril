@@ -52,7 +52,6 @@ module ibex_decoder #(
   output logic [31:0]           imm_b_type_o,
   output logic [31:0]           imm_u_type_o,
   output logic [31:0]           imm_j_type_o,
-  output logic [31:0]           imm_pac_type_o,
   output logic [31:0]           zimm_rs1_type_o,
 
   // register file
@@ -99,9 +98,9 @@ module ibex_decoder #(
 
   // Mithril PAC
   output logic                 pac_gen_o,
+  output logic                 pac_auth_o,
   output logic                 pac_store_o,
-  output logic                 pac_load_o,
-  output ibex_pkg::pac_msg_e   pac_msg_o
+  output logic                 pac_load_o
 );
 
   import ibex_pkg::*;
@@ -146,9 +145,6 @@ module ibex_decoder #(
   assign imm_j_type_o = { {12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0 };
   // immediate for CSR manipulation (zero extended)
   assign zimm_rs1_type_o = { 27'b0, instr_rs1 }; // rs1
-
-  // PAC immediate (S-type format for pac.store/pac.load address offset)
-  assign imm_pac_type_o = { {20{instr[31]}}, instr[31:25], instr[11:7] };
 
   if (RV32B != RV32BNone) begin : gen_rs3_flop
     // the use of rs3 is known one cycle ahead.
@@ -242,6 +238,7 @@ module ibex_decoder #(
     ecall_insn_o          = 1'b0;
     wfi_insn_o            = 1'b0;
     pac_gen_o = 1'b0;
+    pac_auth_o = 1'b0;
     pac_store_o = 1'b0;
     pac_load_o = 1'b0;
 
@@ -350,28 +347,29 @@ module ibex_decoder #(
 
       OPCODE_PAC: begin
         rf_ren_a_o = 1'b1;
+        rf_ren_b_o = 1'b1;  // pac.gen/pac.auth use both rs1 and rs2
         data_req_o = 1'b0;
         data_we_o  = 1'b0;
-        pac_msg_o = PAC_MSG_RA_SP;
         pac_gen_o = 1'b0;
+        pac_auth_o = 1'b0;
         pac_store_o = 1'b0;
         pac_load_o = 1'b0;
         unique case (instr[14:12])
         3'b000:  begin 
-          pac_gen_o  = 1'b1; // pac.genrasp
-          pac_msg_o = PAC_MSG_RA_SP;
+          pac_gen_o  = 1'b1; // pac.gen prd, rs1, rs2
         end
         3'b001:  begin
-           pac_gen_o  = 1'b1; // pac.genmepcsp
-           pac_msg_o = PAC_MSG_MEPC_SP;
+          pac_auth_o  = 1'b1; // pac.auth prs, rs1, rs2
         end
         3'b010:  begin
-          pac_store_o  = 1'b1; // pac.store
+          pac_store_o  = 1'b1; // pac.save offset(rs1), prs
+          rf_ren_b_o = 1'b0;   // pac.save doesn't use rs2
           data_we_o = 1'b1;       
           data_req_o = 1'b1;
         end
         3'b011:  begin
-          pac_load_o  = 1'b1; // pac.load
+          pac_load_o  = 1'b1; // pac.restore prd, offset(rs1)
+          rf_ren_b_o = 1'b0;  // pac.restore doesn't use rs2
           data_req_o = 1'b1;
         end
         default: illegal_insn = 1'b1;
@@ -1225,10 +1223,23 @@ module ibex_decoder #(
 
       end
       OPCODE_PAC: begin
-        alu_op_a_mux_sel_o  = OP_A_REG_A;
-        alu_op_b_mux_sel_o  = OP_B_IMM;
-        imm_b_mux_sel_o     = IMM_B_PAC;
-        alu_operator_o      = ALU_ADD;
+        unique case (instr_alu[14:12])
+          // pac.store offset(rs1), prs - S-Type, ALU calculates address
+          3'b010: begin
+            alu_op_a_mux_sel_o = OP_A_REG_A;
+            alu_op_b_mux_sel_o = OP_B_IMM;
+            imm_b_mux_sel_o    = IMM_B_S;
+            alu_operator_o     = ALU_ADD;
+          end
+          // pac.load prd, offset(rs1) - I-Type, ALU calculates address
+          3'b011: begin
+            alu_op_a_mux_sel_o = OP_A_REG_A;
+            alu_op_b_mux_sel_o = OP_B_IMM;
+            imm_b_mux_sel_o    = IMM_B_I;
+            alu_operator_o     = ALU_ADD;
+          end
+          default: ;
+        endcase
       end
       default: ;
     endcase

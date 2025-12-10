@@ -209,8 +209,6 @@ module ibex_top import ibex_pkg::*; #(
   logic [RegFileDataWidth-1:0] sp_reg; // Register x2 (sp)
   logic [RegFileDataWidth-1:0] s0_reg; // Register x3 (s0)
   logic [RegFileDataWidth-1:0] s1_reg; // Register x4 (s1)
-  logic [RegFileDataWidth-1:0] s2_reg; // Register x5 (s2)
-  logic [RegFileDataWidth-1:0] s3_reg; // Register x6 (s3)
 
   /////////////////////
   // Main clock gate //
@@ -381,8 +379,6 @@ module ibex_top import ibex_pkg::*; #(
     .sp_reg_i(sp_reg),
     .s0_reg_i(s0_reg),
     .s1_reg_i(s1_reg),
-    .s2_reg_i(s2_reg),
-    .s3_reg_i(s3_reg),
 `ifdef RVFI
     .rvfi_valid,
     .rvfi_order,
@@ -490,9 +486,7 @@ module ibex_top import ibex_pkg::*; #(
       .ra_o (ra_reg),
       .sp_o (sp_reg),
       .s0_o (s0_reg),
-      .s1_o (s1_reg),
-      .s2_o (s2_reg),
-      .s3_o (s3_reg)
+      .s1_o (s1_reg)
     );
   end else if (RegFile == RegFileLatch) begin : gen_regfile_latch
     ibex_register_file_latch #(
@@ -522,9 +516,7 @@ module ibex_top import ibex_pkg::*; #(
       .ra_o (ra_reg),
       .sp_o (sp_reg),
       .s0_o (s0_reg),
-      .s1_o (s1_reg),
-      .s2_o (s2_reg),
-      .s3_o (s3_reg)
+      .s1_o (s1_reg)
     );
   end
 

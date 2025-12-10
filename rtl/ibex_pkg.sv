@@ -193,21 +193,13 @@
    MD_OP_REM
  } md_op_e;
 
- typedef enum logic [2:0] {
-  PAC_GEN_RASP     = 3'b000,  // pac.genrasp
-  PAC_GEN_MEPCSP   = 3'b001,  // pac.genmepcsp
-  PAC_SAVE         = 3'b010,  // pac.save
-  PAC_RESTORE      = 3'b011,  // pac.restore
-  PAC_AUTH_RASP    = 3'b100,  // pac.authrasp
-  PAC_AUTH_MEPCSP  = 3'b101   // pac.authmepcsp
+ typedef enum logic [1:0] {
+  PAC_GEN     = 2'b00,  // pac.gen
+  PAC_AUTH    = 2'b01,  // pac.auth
+  PAC_SAVE    = 2'b10,  // pac.save
+  PAC_RESTORE = 2'b11   // pac.restore
  } pac_op_e;
 
-typedef enum logic [1:0] {
-  PAC_MSG_RA_SP,      // Message = {RA, SP}
-  PAC_MSG_MEPC_SP,    // Message = {MEPC, SP}
-  PAC_MSG_RESERVED_0, // Reserved for future use
-  PAC_MSG_RESERVED_1  // Reserved for future use
-} pac_msg_e;
 
 
  //////////////////////////////////
@@ -274,15 +266,14 @@ typedef enum logic [1:0] {
 
  // Immediate b selection
  typedef enum logic [2:0] {
-   IMM_B_I,
-   IMM_B_S,
-   IMM_B_B,
-   IMM_B_U,
-   IMM_B_J,
-   IMM_B_INCR_PC,
-   IMM_B_INCR_ADDR,
-   IMM_B_PAC
- } imm_b_sel_e;
+  IMM_B_I,
+  IMM_B_S,
+  IMM_B_B,
+  IMM_B_U,
+  IMM_B_J,
+  IMM_B_INCR_PC,
+  IMM_B_INCR_ADDR
+} imm_b_sel_e;
 
  // Regfile write data selection
  typedef enum logic {

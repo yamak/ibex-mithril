@@ -714,9 +714,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_reg_waddr_o(mithril_pac_regs_waddr_id),
     .mithril_sec_violation_i(mithril_pac_mismatch),
     .mithril_sec_violation_ack_o(mithril_pac_mismatch_ack),
-    .mithril_pac_message_o      (mithril_pac_message),
-    .mithril_pac_valid_i      (mithril_pac_valid)
-  );
+    .mithril_pac_message_o      (mithril_pac_message)  
+    );
 
   // for RVFI only
   assign unused_illegal_insn_id = illegal_insn_id;
@@ -838,7 +837,6 @@ module ibex_core import ibex_pkg::*; #(
   logic [31:0] mithril_pac_rdata;
   logic [4:0]  mithril_pac_raddr;
   logic [63:0] mithril_pac_message;
-  logic        mithril_pac_valid;
 
   logic        mithril_pac_mismatch;
   logic        mithril_pac_mismatch_ack;
@@ -854,7 +852,7 @@ module ibex_core import ibex_pkg::*; #(
     .message_i    (mithril_pac_message),
     .calculate_i  (mithril_pac_calc),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
-    .valid_o      (mithril_pac_valid),
+    .valid_o      (),
     .pac_mismatch_o(mithril_pac_mismatch),
     .pac_mismatch_ack_i(mithril_pac_mismatch_ack),
     .current_result_reg_i(mithril_pac_regs_waddr_id),
