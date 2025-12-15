@@ -81,7 +81,6 @@ qarma64_enc_core qarma64_enc_core_inst (
     .key_i(key_i),
     .tweak_i(tweak),
     .start_i(start_qarma),
-    .ready_o(),
     .valid_o(qarma_valid),
     .result_o(qarma_result)
   );    

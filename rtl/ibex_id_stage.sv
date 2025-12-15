@@ -327,7 +327,7 @@ module ibex_id_stage #(
   logic mithril_pac_gen_instr_first_cycle;
   logic mithril_pac_auth_instr_first_cycle;
   logic mithril_pac_auth_started_q;
-  logic stall_mithril_pac;
+
   logic mithril_pac_lsu_first_beat_done_q;
 
 
@@ -774,12 +774,7 @@ module ibex_id_stage #(
   assign mithril_pac_verify_o = ret_instr_first_cycle | mithril_pac_auth_instr_first_cycle;
 
 
-  // We need to start stalling immediately when we detect the first cycle of a PAC start instruction.
-  // Although PAC calculation takes 2 cycles, we only need to explicitly stall for the first cycle.
-  // For the second cycle, stall_mem will be automatically asserted due to lsu_req being high,
-  // which provides the necessary stall for completing the PAC operation.
-  // pac.auth also needs stall since it performs PAC calculation for verification
-  assign stall_mithril_pac  = mithril_pac_gen_instr_first_cycle | mithril_pac_auth_instr_first_cycle;
+
 
   assign mithril_pac_calc_o = mithril_pac_gen_instr_first_cycle | 
                               call_instr_first_cycle | 
@@ -1072,7 +1067,7 @@ module ibex_id_stage #(
   // Stall ID/EX stage for reason that relates to instruction in ID/EX, update assertion below if
   // modifying this.
   assign stall_id = stall_ld_hz | stall_mem | stall_multdiv | stall_jump | stall_branch |
-                      stall_alu | stall_mithril_pac;
+                      stall_alu;
 
   // Generally illegal instructions have no reason to stall, however they must still stall waiting
   // for outstanding memory requests so exceptions related to them take priority over the illegal
