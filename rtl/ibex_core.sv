@@ -714,7 +714,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_reg_waddr_o(mithril_pac_regs_waddr_id),
     .mithril_sec_violation_i(mithril_pac_mismatch),
     .mithril_sec_violation_ack_o(mithril_pac_mismatch_ack),
-    .mithril_pac_message_o      (mithril_pac_message)  
+    .mithril_pac_message_o      (mithril_pac_message),
+    .mithril_pac_valid_i        (mithril_pac_valid)
     );
 
   // for RVFI only
@@ -840,6 +841,7 @@ module ibex_core import ibex_pkg::*; #(
 
   logic        mithril_pac_mismatch;
   logic        mithril_pac_mismatch_ack;
+  logic        mithril_pac_valid;  // QARMA valid signal for hazard detection
 
   assign mithril_pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
 
@@ -852,7 +854,7 @@ module ibex_core import ibex_pkg::*; #(
     .message_i    (mithril_pac_message),
     .calculate_i  (mithril_pac_calc),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
-    .valid_o      (),
+    .valid_o      (mithril_pac_valid),
     .pac_mismatch_o(mithril_pac_mismatch),
     .pac_mismatch_ack_i(mithril_pac_mismatch_ack),
     .current_result_reg_i(mithril_pac_regs_waddr_id),

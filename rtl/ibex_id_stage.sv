@@ -200,7 +200,8 @@ module ibex_id_stage #(
   output logic [4:0]                mithril_pac_reg_waddr_o,
   output logic                      mithril_sec_violation_ack_o,
   input logic                       mithril_sec_violation_i,
-  output logic [63:0]               mithril_pac_message_o
+  output logic [63:0]               mithril_pac_message_o,
+  input logic                       mithril_pac_valid_i  // QARMA valid signal for hazard detection
 );
 
   import ibex_pkg::*;
@@ -301,7 +302,7 @@ module ibex_id_stage #(
   logic        lsu_we;
   logic [1:0]  lsu_type;
   logic        lsu_sign_ext;
-  logic        lsu_req, lsu_req_dec;
+  logic        lsu_req, lsu_req_dec, lsu_req_dec_raw;
   logic        data_req_allowed;
 
   // CSR control
@@ -539,7 +540,7 @@ module ibex_id_stage #(
     .csr_op_o    (csr_op_o),
 
     // LSU
-    .data_req_o           (lsu_req_dec),
+    .data_req_o           (lsu_req_dec_raw),  // Raw signal, gated by stall_pac_store_hz below
     .data_we_o            (lsu_we),
     .data_type_o          (lsu_type),
     .data_sign_extension_o(lsu_sign_ext),
@@ -831,7 +832,13 @@ module ibex_id_stage #(
 
 
   assign multdiv_en_dec  = mult_en_dec | div_en_dec;
-  assign lsu_req         = instr_executing ? data_req_allowed & lsu_req_dec  : 1'b0;
+  // PAC Store Hazard: When pac.store is in its first cycle and QARMA just produced valid output,
+  // the pac_regs are being updated at this rising edge. Gate lsu_req_dec to prevent LSU request
+  // and let stall_mem naturally become 0 (since it depends on lsu_req_dec).
+  logic stall_pac_store_hz;
+  assign stall_pac_store_hz = mithril_pac_store_dec & instr_first_cycle & mithril_pac_valid_i;
+  assign lsu_req_dec     = stall_pac_store_hz ? 1'b0 : lsu_req_dec_raw;
+  assign lsu_req         = instr_executing ? data_req_allowed & lsu_req_dec : 1'b0;
   assign mult_en_id      = instr_executing ? mult_en_dec                     : 1'b0;
   assign div_en_id       = instr_executing ? div_en_dec                      : 1'b0;
 
@@ -1072,13 +1079,13 @@ module ibex_id_stage #(
   // Stall ID/EX stage for reason that relates to instruction in ID/EX, update assertion below if
   // modifying this.
   assign stall_id = stall_ld_hz | stall_mem | stall_multdiv | stall_jump | stall_branch |
-                      stall_alu;
+                      stall_alu | stall_pac_store_hz;
 
   // Generally illegal instructions have no reason to stall, however they must still stall waiting
   // for outstanding memory requests so exceptions related to them take priority over the illegal
   // instruction exception.
   `ASSERT(IllegalInsnStallMustBeMemStall, illegal_insn_o & stall_id |-> stall_mem &
-    ~(stall_ld_hz | stall_multdiv | stall_jump | stall_branch | stall_alu))
+    ~(stall_ld_hz | stall_multdiv | stall_jump | stall_branch | stall_alu | stall_pac_store_hz))
 
   assign instr_done = ~stall_id & ~flush_id & instr_executing;
 
