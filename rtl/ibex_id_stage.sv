@@ -783,16 +783,15 @@ module ibex_id_stage #(
 
   // Verify signal: triggered by implicit return checks OR explicit pac.auth instruction
   // Disabled in debug mode to prevent false PAC verification failures when entering debug ROM
-  assign mithril_pac_verify_o = ~debug_mode_o & (ret_instr_first_cycle | mithril_pac_auth_instr_first_cycle);
+  assign mithril_pac_verify_o = ~debug_mode_o & ~stall_id & instr_executing & (ret_instr_first_cycle | mithril_pac_auth_instr_first_cycle);
 
 
 
 
   // PAC calculation disabled in debug mode to prevent incorrect PAC generation 
   // when CPU branches to debug ROM via exception-like mechanism
-  assign mithril_pac_calc_o = ~debug_mode_o & (mithril_pac_gen_instr_first_cycle | 
-                              call_instr_first_cycle | 
-                              trap_detected_q);
+  assign mithril_pac_calc_o = ~debug_mode_o & ~stall_id & instr_executing & (mithril_pac_gen_instr_first_cycle | 
+                              call_instr_first_cycle | trap_detected_q);
   assign mithril_pac_regs_we_o       = mithril_pac_load_dec;
   // Because mithril_pac_gen_dec/mithril_pac_auth_dec stay high until the end of the instruction, 
   // we need to use these signals to detect the first cycle of the start instruction.
