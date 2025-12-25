@@ -1,9 +1,17 @@
 /*
  * Copyright (c) 2025 Yusuf Yamak <yamakyusuf@gmail.com>
- *
- * SPDX-License-Identifier: Apache-2.0
- */
 
+/**
+ * Fully Pipelined PAC Unit
+ *
+ * This unit handles PAC (Pointer Authentication Code) operations using QARMA-64.
+ * It is fully pipelined - can accept a new calculate/verify request every cycle
+ * without blocking. No state machine needed.
+ *
+ * Pipeline timing (QARMA is 2-cycle):
+ *   Cycle N:   calculate_i/verify_i asserted, QARMA starts
+ *   Cycle N+1: QARMA valid, result written to pac_regs or compared for verify
+ */
 module mithril_pac_unit #(
   parameter int NumRegs = 2
 )(
@@ -17,7 +25,7 @@ module mithril_pac_unit #(
   // Message source selection
   input logic [63:0] message_i,
   
-  // Control signals
+  // Control signals - can be asserted every cycle (pipelined)
   input logic calculate_i,
   input logic verify_i,
   
@@ -44,36 +52,36 @@ logic [63:0] qarma_result;
 logic qarma_valid;
 logic start_qarma;
 
-typedef enum {
-  IDLE,
-  CALCULATE_PAC,
-  VERIFY_PAC
-} state_t;
+// Pipeline registers - track operation type and target register
+logic is_verify_q;  // Was the operation that's completing now a verify?
+logic [PacRegAddrWidth-1:0] target_reg_q;  // Which register to write/verify
 
-state_t state_reg;
-state_t state_next;
 logic pac_mismatch_q, pac_mismatch_d;
-logic [PacRegAddrWidth-1:0] current_result_reg_q;
 
+// Each pac register is 64 bits. Split into two 32-bit registers.
+logic [31:0] pac_regs[2 * NumRegs];
 
-  // Each pac register is 64 bits. Split into two 32-bit registers.
-  logic [31:0] pac_regs[2 * NumRegs];
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni) begin
-      for(int i = 0; i < NumRegs * 2; i++) begin
-        pac_regs[i] <= 32'b0;
-      end
-    end else if (we_i) begin
-      pac_regs[waddr_i[PacRegAddrWidth-1:0]] <= wdata_i;
-    end else if (qarma_valid) begin
-      pac_regs[current_result_reg_q] <= qarma_result[31:0];
-      pac_regs[current_result_reg_q + 1] <= qarma_result[63:32];
+// PAC register file write logic
+always_ff @(posedge clk_i or negedge rst_ni) begin
+  if (!rst_ni) begin
+    for(int i = 0; i < NumRegs * 2; i++) begin
+      pac_regs[i] <= 32'b0;
+    end
+  end else if (we_i) begin
+    // External write (from pac.load instruction)
+    pac_regs[waddr_i[PacRegAddrWidth-1:0]] <= wdata_i;
+  end else if (qarma_valid) begin
+    // QARMA finished a calculate operation - write result
+    if(!is_verify_q) begin
+      pac_regs[target_reg_q] <= qarma_result[31:0];
+      pac_regs[target_reg_q + 1] <= qarma_result[63:32];
     end
   end
+end
 
-  assign rdata_o = pac_regs[raddr_i[PacRegAddrWidth-1:0]];
+assign rdata_o = pac_regs[raddr_i[PacRegAddrWidth-1:0]];
 
+// QARMA instance - fully pipelined, 2-cycle latency
 qarma64_enc_core qarma64_enc_core_inst (
     .clk_i(clk_i),
     .rst_ni(rst_ni),
@@ -83,62 +91,55 @@ qarma64_enc_core qarma64_enc_core_inst (
     .start_i(start_qarma),
     .valid_o(qarma_valid),
     .result_o(qarma_result)
-  );    
+);
 
+// Pipeline registers for operation tracking
 always_ff @(posedge clk_i or negedge rst_ni) begin
   if (!rst_ni) begin
-    state_reg <= IDLE;
+    is_verify_q <= 1'b0;
+    target_reg_q <= '0;
     pac_mismatch_q <= 1'b0;
-    current_result_reg_q <= '0; 
-  end
-  else begin
-    state_reg <= state_next;
+  end else begin
+    // Capture operation type and target register when starting
+    if(verify_i) begin
+      is_verify_q <= 1'b1;
+      target_reg_q <= {current_result_reg_i[PacRegAddrWidth-1:1], 1'b0};
+    end else if (calculate_i) begin
+      is_verify_q <= 1'b0;
+      target_reg_q <= {current_result_reg_i[PacRegAddrWidth-1:1], 1'b0};
+    end else if (qarma_valid) begin
+      is_verify_q <= 1'b0;
+    end 
+    
+    
+    // Mismatch flag handling
     pac_mismatch_q <= pac_mismatch_d;
-    if(calculate_i || verify_i) begin
-      // Truncate to PacRegAddrWidth and clear bit 0 to get base index of 64-bit PAC register
-      current_result_reg_q <= {current_result_reg_i[PacRegAddrWidth-1:1], 1'b0};
+  end
+end
+
+// Combinational logic for starting QARMA and mismatch detection
+always_comb begin
+  // Always accept new operations - fully pipelined!
+  start_qarma = calculate_i | verify_i;
+  
+  // Mismatch logic
+  pac_mismatch_d = pac_mismatch_q;
+  
+  // Clear mismatch only on ack
+  if (pac_mismatch_ack_i) begin
+    pac_mismatch_d = 1'b0;
+  end
+  
+  // Set mismatch if verify operation completed and PAC doesn't match
+  if (qarma_valid && is_verify_q) begin
+    if (qarma_result != {pac_regs[target_reg_q + 1], pac_regs[target_reg_q]}) begin
+      pac_mismatch_d = 1'b1;
     end
   end
 end
 
-always_comb begin
-  state_next = state_reg;
-  start_qarma = 1'b0;
-  pac_mismatch_d = pac_mismatch_q;
-  if(pac_mismatch_ack_i || ((state_reg == IDLE) && (calculate_i || verify_i))) begin
-    pac_mismatch_d = 1'b0;
-  end
-  case (state_reg)
-    IDLE: begin
-      if (calculate_i) begin
-        start_qarma = 1'b1;
-        state_next = CALCULATE_PAC;
-      end
-      else if (verify_i) begin
-        start_qarma = 1'b1;
-        state_next = VERIFY_PAC;
-      end
-    end
-    CALCULATE_PAC: begin
-      if (qarma_valid) begin
-        state_next = IDLE;
-      end
-    end
-    VERIFY_PAC: begin
-      if(qarma_valid) begin
-        state_next = IDLE;
-        if (qarma_result == {pac_regs[current_result_reg_q + 1], pac_regs[current_result_reg_q]}) begin
-          pac_mismatch_d = 1'b0;
-        end else begin
-          pac_mismatch_d = 1'b1;
-        end
-      end 
-    end
-  endcase
-end
 assign tweak = {s1_i, s0_i};
 assign valid_o = qarma_valid;
 assign pac_mismatch_o = pac_mismatch_q | pac_mismatch_d;
 
 endmodule
-
