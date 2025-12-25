@@ -189,6 +189,8 @@ module ibex_id_stage #(
   input logic                       mithril_ext_stall_i,
   input logic [31:0]                sp_reg_i,
   input logic [31:0]                ra_reg_i,
+  input logic [31:0]                s0_reg_i,
+  input logic [31:0]                s1_reg_i,
   input logic [31:0]                mepc_reg_i,
 
   // Mithril PAC control out / results in 
@@ -201,6 +203,8 @@ module ibex_id_stage #(
   output logic                      mithril_sec_violation_ack_o,
   input logic                       mithril_sec_violation_i,
   output logic [63:0]               mithril_pac_message_o,
+  output logic [31:0]               mithril_pac_s0_fwd_o,  // Forwarded s0 for PAC tweak
+  output logic [31:0]               mithril_pac_s1_fwd_o,  // Forwarded s1 for PAC tweak
   input logic                       mithril_pac_valid_i  // QARMA valid signal for hazard detection
 );
 
@@ -330,6 +334,10 @@ module ibex_id_stage #(
   logic mithril_pac_auth_started_q;
 
   logic mithril_pac_lsu_first_beat_done_q;
+
+  // Internal forwarded values for PAC message calculation
+  logic [31:0] sp_fwd;
+  logic [31:0] ra_fwd;
 
 
   /////////////
@@ -741,18 +749,18 @@ module ibex_id_stage #(
     mithril_pac_message_o = 64'b0;
     mithril_pac_reg_waddr_o = rf_waddr_id * 2;
     if(trap_detected_q) begin
-      mithril_pac_message_o = {mepc_reg_i, sp_reg_i};
+      mithril_pac_message_o = {mepc_reg_i, sp_fwd};
       mithril_pac_reg_waddr_o = 5'd2;  // pr1
     end else if(call_instr_first_cycle) begin
-      mithril_pac_message_o = {link_addr, sp_reg_i};
+      mithril_pac_message_o = {link_addr, sp_fwd};
       mithril_pac_reg_waddr_o = 5'd0;  // pr0
     end else if(ret_instr_first_cycle) begin
       if(mret_insn_dec) begin
         mithril_pac_reg_waddr_o = 5'd2;  // pr1
-        mithril_pac_message_o = {mepc_reg_i, sp_reg_i};
+        mithril_pac_message_o = {mepc_reg_i, sp_fwd};
       end else begin                                     
         mithril_pac_reg_waddr_o = 5'd0;  // pr0
-        mithril_pac_message_o = {ra_reg_i, sp_reg_i};
+        mithril_pac_message_o = {ra_fwd, sp_fwd};
       end
     end else begin      
       mithril_pac_message_o = {rf_rdata_b_fwd, rf_rdata_a_fwd};                                
@@ -1205,6 +1213,25 @@ module ibex_id_stage #(
     // Stall ID/EX as instruction in ID/EX cannot proceed to writeback yet
     assign stall_wb = en_wb_o & ~ready_wb_i;
 
+    // ========================
+    // PAC Register Forwarding (only with WritebackStage)
+    // ========================
+    // Forward sp(x2), s0(x8), s1(x9), ra(x1) from WB stage if being written
+    // This ensures PAC calculations use the correct register values even when
+    // a preceding instruction is writing to these registers.
+    logic rf_pac_sp_wb_match, rf_pac_s0_wb_match, rf_pac_s1_wb_match, rf_pac_ra_wb_match;
+    assign rf_pac_sp_wb_match = (rf_waddr_wb_i == 5'd2);   // sp = x2
+    assign rf_pac_s0_wb_match = (rf_waddr_wb_i == 5'd8);   // s0 = x8
+    assign rf_pac_s1_wb_match = (rf_waddr_wb_i == 5'd9);   // s1 = x9
+    assign rf_pac_ra_wb_match = (rf_waddr_wb_i == 5'd1);   // ra = x1
+
+    assign mithril_pac_s0_fwd_o = rf_pac_s0_wb_match & rf_write_wb_i ? rf_wdata_fwd_wb_i : s0_reg_i;
+    assign mithril_pac_s1_fwd_o = rf_pac_s1_wb_match & rf_write_wb_i ? rf_wdata_fwd_wb_i : s1_reg_i;
+
+    // Internal forwarded values for PAC message calculation
+    assign sp_fwd = rf_pac_sp_wb_match & rf_write_wb_i ? rf_wdata_fwd_wb_i : sp_reg_i;
+    assign ra_fwd = rf_pac_ra_wb_match & rf_write_wb_i ? rf_wdata_fwd_wb_i : ra_reg_i;
+
     assign perf_dside_wait_o = instr_valid_i & ~instr_kill &
                                (outstanding_memory_access | stall_ld_hz);
   end else begin : gen_no_stall_mem
@@ -1262,12 +1289,20 @@ module ibex_id_stage #(
     assign perf_dside_wait_o = instr_executing & lsu_req_dec & ~lsu_resp_valid_i;
 
     assign instr_id_done_o = instr_done;
+
+    // No forwarding without WritebackStage - use direct register values
+    assign mithril_pac_s0_fwd_o = s0_reg_i;
+    assign mithril_pac_s1_fwd_o = s1_reg_i;
+    assign sp_fwd = sp_reg_i;
+    assign ra_fwd = ra_reg_i;
   end
 
   // Signal which instructions to count as retired in minstret, all traps along with ebrk and
   // ecall instructions are not counted.
   assign instr_perf_count_id_o = ~ebrk_insn & ~ecall_insn_dec & ~illegal_insn_dec &
       ~illegal_csr_insn_i & ~instr_fetch_err_i;
+
+
 
   // An instruction is ready to move to the writeback stage (or retire if there is no writeback
   // stage)

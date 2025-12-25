@@ -704,6 +704,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_ext_stall_i,
     .sp_reg_i,
     .ra_reg_i,
+    .s0_reg_i,
+    .s1_reg_i,
     .mepc_reg_i(csr_mepc),
     // PAC core integration
     .mithril_pac_calc_o       (mithril_pac_calc),
@@ -715,6 +717,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_sec_violation_i(mithril_pac_mismatch),
     .mithril_sec_violation_ack_o(mithril_pac_mismatch_ack),
     .mithril_pac_message_o      (mithril_pac_message),
+    .mithril_pac_s0_fwd_o       (mithril_pac_s0_fwd),
+    .mithril_pac_s1_fwd_o       (mithril_pac_s1_fwd),
     .mithril_pac_valid_i        (mithril_pac_valid)
     );
 
@@ -842,6 +846,8 @@ module ibex_core import ibex_pkg::*; #(
   logic        mithril_pac_mismatch;
   logic        mithril_pac_mismatch_ack;
   logic        mithril_pac_valid;  // QARMA valid signal for hazard detection
+  logic [31:0] mithril_pac_s0_fwd;  // Forwarded s0 from ID stage
+  logic [31:0] mithril_pac_s1_fwd;  // Forwarded s1 from ID stage
 
   assign mithril_pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
 
@@ -849,8 +855,8 @@ module ibex_core import ibex_pkg::*; #(
     .clk_i        (clk_i),
     .rst_ni       (rst_ni),
     .key_i        ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
-    .s0_i         (s0_reg_i),
-    .s1_i         (s1_reg_i),
+    .s0_i         (mithril_pac_s0_fwd),  // Use forwarded value for correct PAC tweak
+    .s1_i         (mithril_pac_s1_fwd),  // Use forwarded value for correct PAC tweak
     .message_i    (mithril_pac_message),
     .calculate_i  (mithril_pac_calc),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
