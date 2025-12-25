@@ -52,7 +52,6 @@ module ibex_decoder #(
   output logic [31:0]           imm_b_type_o,
   output logic [31:0]           imm_u_type_o,
   output logic [31:0]           imm_j_type_o,
-  output logic [31:0]           imm_pac_type_o,
   output logic [31:0]           zimm_rs1_type_o,
 
   // register file
@@ -98,11 +97,10 @@ module ibex_decoder #(
   output logic                 branch_in_dec_o,
 
   // Mithril PAC
-  output logic                 pac_start_o,
-  output logic                 pac_end_o,
+  output logic                 pac_gen_o,
+  output logic                 pac_auth_o,
   output logic                 pac_store_o,
-  output logic                 pac_load_o,
-  output logic [21:0]          pac_site_id_o
+  output logic                 pac_load_o
 );
 
   import ibex_pkg::*;
@@ -145,7 +143,6 @@ module ibex_decoder #(
   assign imm_b_type_o = { {19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0 };
   assign imm_u_type_o = { instr[31:12], 12'b0 };
   assign imm_j_type_o = { {12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0 };
-  //assign imm_pac_type_o = 32'b0; // For now, Pac immediate always zero
   // immediate for CSR manipulation (zero extended)
   assign zimm_rs1_type_o = { 27'b0, instr_rs1 }; // rs1
 
@@ -174,8 +171,7 @@ module ibex_decoder #(
   assign instr_rs1 = instr[19:15];
   assign instr_rs2 = instr[24:20];
   assign instr_rs3 = instr[31:27];
-  assign rf_raddr_a_o = (pac_start_o | pac_end_o | pac_store_o | pac_load_o) ? 5'h02 : // sp
-                        (use_rs3_q & ~instr_first_cycle_i) ? instr_rs3 : instr_rs1; // rs3 / rs1
+  assign rf_raddr_a_o = (use_rs3_q & ~instr_first_cycle_i) ? instr_rs3 : instr_rs1; // rs3 / rs1
   assign rf_raddr_b_o = instr_rs2; // rs2
 
   // destination register
@@ -240,11 +236,10 @@ module ibex_decoder #(
     dret_insn_o           = 1'b0;
     ecall_insn_o          = 1'b0;
     wfi_insn_o            = 1'b0;
-    pac_start_o = 1'b0;
-    pac_end_o = 1'b0;
+    pac_gen_o = 1'b0;
+    pac_auth_o = 1'b0;
     pac_store_o = 1'b0;
     pac_load_o = 1'b0;
-    pac_site_id_o        = 22'b0;
 
     opcode                = opcode_e'(instr[6:0]);
 
@@ -350,27 +345,31 @@ module ibex_decoder #(
       end
 
       OPCODE_PAC: begin
-        pac_site_id_o = {instr[31:15], instr[11:7]};
         rf_ren_a_o = 1'b1;
-        data_req_o = 1'b1;
+        rf_ren_b_o = 1'b1;  // pac.gen/pac.auth use both rs1 and rs2
+        data_req_o = 1'b0;
         data_we_o  = 1'b0;
-        imm_pac_type_o = 32'b0;
+        pac_gen_o = 1'b0;
+        pac_auth_o = 1'b0;
+        pac_store_o = 1'b0;
+        pac_load_o = 1'b0;
         unique case (instr[14:12])
         3'b000:  begin 
-          pac_start_o  = 1'b1; // pac_start
-          data_we_o = 1'b1;          
+          pac_gen_o  = 1'b1; // pac.gen prd, rs1, rs2
         end
         3'b001:  begin
-           pac_end_o  = 1'b1; // pac_end
+          pac_auth_o  = 1'b1; // pac.auth prs, rs1, rs2
         end
         3'b010:  begin
-          pac_store_o  = 1'b1; // pac_store
+          pac_store_o  = 1'b1; // pac.save offset(rs1), prs
+          rf_ren_b_o = 1'b0;   // pac.save doesn't use rs2
           data_we_o = 1'b1;       
-          imm_pac_type_o = { {20{instr[31]}}, instr[31:25], instr[11:7] };
+          data_req_o = 1'b1;
         end
         3'b011:  begin
-          pac_load_o  = 1'b1; // pac_load
-          imm_pac_type_o = { {20{instr[31]}}, instr[31:20] };
+          pac_load_o  = 1'b1; // pac.restore prd, offset(rs1)
+          rf_ren_b_o = 1'b0;  // pac.restore doesn't use rs2
+          data_req_o = 1'b1;
         end
         default: illegal_insn = 1'b1;
       endcase
@@ -1223,10 +1222,23 @@ module ibex_decoder #(
 
       end
       OPCODE_PAC: begin
-        alu_op_a_mux_sel_o  = OP_A_REG_A;
-        alu_op_b_mux_sel_o  = OP_B_IMM;
-        imm_b_mux_sel_o     = IMM_B_PAC;
-        alu_operator_o      = ALU_ADD;
+        unique case (instr_alu[14:12])
+          // pac.store offset(rs1), prs - S-Type, ALU calculates address
+          3'b010: begin
+            alu_op_a_mux_sel_o = OP_A_REG_A;
+            alu_op_b_mux_sel_o = OP_B_IMM;
+            imm_b_mux_sel_o    = IMM_B_S;
+            alu_operator_o     = ALU_ADD;
+          end
+          // pac.load prd, offset(rs1) - I-Type, ALU calculates address
+          3'b011: begin
+            alu_op_a_mux_sel_o = OP_A_REG_A;
+            alu_op_b_mux_sel_o = OP_B_IMM;
+            imm_b_mux_sel_o    = IMM_B_I;
+            alu_operator_o     = ALU_ADD;
+          end
+          default: ;
+        endcase
       end
       default: ;
     endcase

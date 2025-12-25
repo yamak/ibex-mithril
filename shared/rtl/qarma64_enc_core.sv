@@ -20,7 +20,6 @@
  *  - block_i: 64-bit input plaintext block
  *  - key_i: 128-bit key, concatenated as {w0, k0}
  *  - tweak_i: 64-bit tweak value
- *  - ready_o: High when core can accept new input (STAGE1)
  *  - valid_o: High when result_o is valid (during STAGE2)
  *  - result_o: 64-bit output ciphertext block
  */
@@ -33,7 +32,6 @@ module qarma64_enc_core #(
     input logic [127:0] key_i,
     input logic [63:0] tweak_i,
     input logic start_i,
-    output logic ready_o,
     output logic valid_o,
     output logic [63:0] result_o
     );
@@ -348,8 +346,7 @@ function automatic void compute_stage2(
     input key_t key,
     input tweak_t tweak_in,
     input block_t block_in,
-    output block_t block_out,
-    output tweak_t tweak_out
+    output block_t block_out
 );
 u64_t w0_l = key[127:64];
 u64_t k0_l = key[63:0];
@@ -365,25 +362,23 @@ end
 is ^= w1_l;
 
 block_out = is;
-tweak_out = tweak;
-
 endfunction
 
 block_t is_stage_reg, is_stage_next;
 tweak_t tweak_stage_reg, tweak_stage_next;
-state_t state_reg, state_next;
+logic stage2_valid_reg, stage2_valid_next;
 
 /** Register stage: state/tweak/state machine */
 always_ff @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
         is_stage_reg <= 0;
         tweak_stage_reg <= 0;
-        state_reg <= STAGE1;
+        stage2_valid_reg <= 0;
     end
     else begin
         is_stage_reg <= is_stage_next;
         tweak_stage_reg <= tweak_stage_next;
-        state_reg <= state_next;
+        stage2_valid_reg <= stage2_valid_next;
     end
 end
 
@@ -391,26 +386,14 @@ end
 always_comb begin
     is_stage_next = is_stage_reg;
     tweak_stage_next = tweak_stage_reg;
-    state_next = state_reg;
-    case(state_reg)
-        STAGE1: begin
-            if(start_i) begin
-                compute_stage1(key_i, tweak_i, block_i, is_stage_next, tweak_stage_next);
-                state_next = STAGE2;
-            end
-            else begin
-                state_next = STAGE1;
-            end
-        end
-        STAGE2: begin
-            compute_stage2(key_i, tweak_stage_reg, is_stage_reg, is_stage_next, tweak_stage_next);
-            state_next = STAGE1;
-        end
-    endcase
+    stage2_valid_next = 1'b0;
+    if(start_i) begin
+        compute_stage1(key_i, tweak_i, block_i, is_stage_next, tweak_stage_next);
+        stage2_valid_next = 1'b1;
+    end
+    compute_stage2(key_i, tweak_stage_reg, is_stage_reg, result_o);
 end
 
-assign ready_o = (state_reg == STAGE1);
-assign valid_o = (state_reg == STAGE2);
-assign result_o = (state_reg == STAGE2) ? is_stage_next : is_stage_reg;
+assign valid_o = stage2_valid_reg;
 
 endmodule

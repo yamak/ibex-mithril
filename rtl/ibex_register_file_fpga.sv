@@ -45,9 +45,7 @@ module ibex_register_file_fpga #(
   output logic [DataWidth-1:0] ra_o, 
   output logic [DataWidth-1:0] sp_o, 
   output logic [DataWidth-1:0] s0_o, 
-  output logic [DataWidth-1:0] s1_o, 
-  output logic [DataWidth-1:0] s2_o, 
-  output logic [DataWidth-1:0] s3_o 
+  output logic [DataWidth-1:0] s1_o
 );
 
   localparam int ADDR_WIDTH = RV32E ? 4 : 5;
@@ -57,6 +55,12 @@ module ibex_register_file_fpga #(
   logic we; // write enable if writing to any register other than R0
 
   logic [DataWidth-1:0] mem_o_a, mem_o_b;
+
+  // Shadow registers for Mithril PAC (to preserve BRAM inference)
+  logic [DataWidth-1:0] ra_shadow_q;  // x1 (ra)
+  logic [DataWidth-1:0] sp_shadow_q;  // x2 (sp)
+  logic [DataWidth-1:0] s0_shadow_q;  // x8 (s0/fp)
+  logic [DataWidth-1:0] s1_shadow_q;  // x9 (s1)
 
   // WE strobe and one-hot encoded raddr alert.
   logic oh_raddr_a_err, oh_raddr_b_err, oh_we_err;
@@ -188,16 +192,31 @@ module ibex_register_file_fpga #(
     end
   end : sync_write
 
+  // Shadow registers for PAC - updated on write to preserve BRAM inference
+  always_ff @(posedge clk_i or negedge rst_ni) begin : pac_shadow_regs
+    if (!rst_ni) begin
+      ra_shadow_q <= WordZeroVal;
+      sp_shadow_q <= WordZeroVal;
+      s0_shadow_q <= WordZeroVal;
+      s1_shadow_q <= WordZeroVal;
+    end else if (we_a_i) begin
+      // Update shadow register when corresponding register is written
+      case (waddr_a_i)
+        5'd1:  ra_shadow_q <= wdata_a_i;  // x1 (ra)
+        5'd2:  sp_shadow_q <= wdata_a_i;  // x2 (sp)
+        5'd8:  s0_shadow_q <= wdata_a_i;  // x8 (s0/fp)
+        5'd9:  s1_shadow_q <= wdata_a_i;  // x9 (s1)
+        default: ; // No update for other registers
+      endcase
+    end
+  end : pac_shadow_regs
+
   // Make sure we initialize the BRAM with the correct register reset value.
   initial begin
     for (int k = 0; k < NUM_WORDS; k++) begin
       mem[k] = WordZeroVal;
     end
   end
-
-  // Reset not used in this register file version
-  logic unused_rst_ni;
-  assign unused_rst_ni = rst_ni;
 
   // Dummy instruction changes not relevant for FPGA implementation
   logic unused_dummy_instr;
@@ -206,12 +225,10 @@ module ibex_register_file_fpga #(
   logic unused_test_en;
   assign unused_test_en = test_en_i;
 
-  // Assign outputs for Mithril PAC
-  assign ra_o = mem[1]; // Register x1 (ra)
-  assign sp_o = mem[2]; // Register x2 (sp)
-  assign s0_o = mem[8]; // Register x8 (s0)
-  assign s1_o = mem[9]; // Register x9 (s1)
-  assign s2_o = mem[18]; // Register x18 (s2)
-  assign s3_o = mem[19]; // Register x19 (s3)
+  // Assign outputs for Mithril PAC (from shadow registers to preserve BRAM)
+  assign ra_o = ra_shadow_q;  // x1 (ra)
+  assign sp_o = sp_shadow_q;  // x2 (sp)
+  assign s0_o = s0_shadow_q;  // x8 (s0/fp)
+  assign s1_o = s1_shadow_q;  // x9 (s1)
 
 endmodule

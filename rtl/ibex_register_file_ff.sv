@@ -47,9 +47,7 @@ module ibex_register_file_ff #(
   output logic [DataWidth-1:0] ra_o,
   output logic [DataWidth-1:0] sp_o,
   output logic [DataWidth-1:0] s0_o,
-  output logic [DataWidth-1:0] s1_o,
-  output logic [DataWidth-1:0] s2_o,
-  output logic [DataWidth-1:0] s3_o
+  output logic [DataWidth-1:0] s1_o
 );
 
   localparam int unsigned ADDR_WIDTH = RV32E ? 4 : 5;
@@ -247,8 +245,6 @@ module ibex_register_file_ff #(
   assign sp_o = rf_reg[2]; // Register x2 (sp)
   assign s0_o = rf_reg[8]; // Register x8 (s0)
   assign s1_o = rf_reg[9]; // Register x9 (s1)
-  assign s2_o = rf_reg[18]; // Register x18 (s2)
-  assign s3_o = rf_reg[19]; // Register x19 (s3)
 
   // Signal not used in FF register file
   logic unused_test_en;

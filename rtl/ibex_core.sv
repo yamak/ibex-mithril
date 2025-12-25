@@ -163,9 +163,7 @@ module ibex_core import ibex_pkg::*; #(
   input logic [31:0]                   ra_reg_i,
   input logic [31:0]                   sp_reg_i,
   input logic [31:0]                   s0_reg_i,
-  input logic [31:0]                   s1_reg_i,
-  input logic [31:0]                   s2_reg_i,
-  input logic [31:0]                   s3_reg_i
+  input logic [31:0]                   s1_reg_i
 );
 
   localparam int unsigned PMPNumChan      = 3;
@@ -704,17 +702,25 @@ module ibex_core import ibex_pkg::*; #(
     .instr_id_done_o  (instr_id_done),
     // Mithril signals
     .mithril_ext_stall_i,
+    .sp_reg_i,
+    .ra_reg_i,
+    .s0_reg_i,
+    .s1_reg_i,
+    .mepc_reg_i(csr_mepc),
     // PAC core integration
     .mithril_pac_calc_o       (mithril_pac_calc),
     .mithril_pac_regs_we_o    (mithril_pac_regs_we),
-    .mithril_pac_site_id_o    (mithril_pac_site_id),
     .mithril_pac_verify_o     (mithril_pac_verify),
-    .mithril_pac_lo_i         (mithril_pac_lo_core),
-    .mithril_pac_hi_i         (mithril_pac_hi_core),
-    .mithril_pac_reg_waddr_id_o(pac_regs_waddr_id),
+    .mithril_pac_reg_rdata_i  (mithril_pac_rdata),
+    .mithril_pac_reg_raddr_o  (mithril_pac_raddr),
+    .mithril_pac_reg_waddr_o(mithril_pac_regs_waddr_id),
     .mithril_sec_violation_i(mithril_pac_mismatch),
-    .mithril_sec_violation_ack_o(mithril_pac_mismatch_ack)
-  );
+    .mithril_sec_violation_ack_o(mithril_pac_mismatch_ack),
+    .mithril_pac_message_o      (mithril_pac_message),
+    .mithril_pac_s0_fwd_o       (mithril_pac_s0_fwd),
+    .mithril_pac_s1_fwd_o       (mithril_pac_s1_fwd),
+    .mithril_pac_valid_i        (mithril_pac_valid)
+    );
 
   // for RVFI only
   assign unused_illegal_insn_id = illegal_insn_id;
@@ -827,70 +833,42 @@ module ibex_core import ibex_pkg::*; #(
   // ------------------------------
   logic        mithril_pac_calc;
   logic        mithril_pac_regs_we;
-  logic [21:0] mithril_pac_site_id;
   logic        mithril_pac_verify;
+  logic        mithril_pac_regs_we_id;
+  logic [4:0]  mithril_pac_regs_waddr_id;
+  logic        mithril_pac_regs_we_wb;
+  logic [4:0]  mithril_pac_regs_waddr_wb;
+  logic [31:0] mithril_pac_regs_wdata_wb;
+  logic [31:0] mithril_pac_rdata;
+  logic [4:0]  mithril_pac_raddr;
+  logic [63:0] mithril_pac_message;
 
-  logic [31:0] mithril_pac_lo_core;
-  logic [31:0] mithril_pac_hi_core;
-  logic [63:0] mithril_current_pac;
-
-  logic        pac_regs_we_id;
-  logic        pac_regs_waddr_id; // 0=lo, 1=hi
-  logic        pac_regs_we_wb;
-  logic        pac_regs_waddr_wb;
-  logic [31:0] pac_regs_wdata_wb;
-
-  logic [31:0] latched_sp;
-  logic        trap_ctx_q;
-  logic        trap_ctx_o;
   logic        mithril_pac_mismatch;
   logic        mithril_pac_mismatch_ack;
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni) begin
-      trap_ctx_q <= 1'b0;
-    end else begin
-      if (csr_save_cause)                         
-        trap_ctx_q <= 1'b1; 
-      if (csr_restore_mret_id || csr_restore_dret_id) 
-        trap_ctx_q <= 1'b0; 
-    end
-  end
-  assign trap_ctx_o = trap_ctx_q;
-  
-  assign pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
-  mithril_pac_regs u_mithril_pac_regs (
-    .clk_i        (clk_i),
-    .rst_ni       (rst_ni),
-    .waddr_i      (pac_regs_waddr_wb),
-    .wdata_i      (pac_regs_wdata_wb),
-    .sp_i         (sp_reg_i),
-    .we_i         (pac_regs_we_wb),
-    .trap_ctx_i   (trap_ctx_o), 
-    .pac_o        (mithril_current_pac),
-    .latched_sp_o (latched_sp)
-  );
+  logic        mithril_pac_valid;  // QARMA valid signal for hazard detection
+  logic [31:0] mithril_pac_s0_fwd;  // Forwarded s0 from ID stage
+  logic [31:0] mithril_pac_s1_fwd;  // Forwarded s1 from ID stage
 
+  assign mithril_pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
 
   mithril_pac_unit u_mithril_pac_unit (
     .clk_i        (clk_i),
     .rst_ni       (rst_ni),
-    .key          ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
-    .ra_i         (ra_reg_i),
-    .sp_i         (mithril_pac_verify ? latched_sp : sp_reg_i),
-    .s0_i         (s0_reg_i),
-    .s1_i         (s1_reg_i),
-    .s2_i         (s2_reg_i),
-    .s3_i         (s3_reg_i),
-    .site_id_i    (mithril_pac_site_id),
-    .trap_ctx_i   (trap_ctx_o),
+    .key_i        ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
+    .s0_i         (mithril_pac_s0_fwd),  // Use forwarded value for correct PAC tweak
+    .s1_i         (mithril_pac_s1_fwd),  // Use forwarded value for correct PAC tweak
+    .message_i    (mithril_pac_message),
     .calculate_i  (mithril_pac_calc),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
-    .pac_i        (mithril_current_pac),
-    .pac_lo_o     (mithril_pac_lo_core),
-    .pac_hi_o     (mithril_pac_hi_core),
-    .valid_o      (),
+    .valid_o      (mithril_pac_valid),
     .pac_mismatch_o(mithril_pac_mismatch),
-    .pac_mismatch_ack_i(mithril_pac_mismatch_ack)
+    .pac_mismatch_ack_i(mithril_pac_mismatch_ack),
+    .current_result_reg_i(mithril_pac_regs_waddr_id),
+    .rdata_o        (mithril_pac_rdata),
+    .raddr_i        (mithril_pac_raddr),
+    .waddr_i        (mithril_pac_regs_waddr_wb),
+    .wdata_i        (mithril_pac_regs_wdata_wb),
+    .we_i           (mithril_pac_regs_we_wb)
   );
 
   ibex_wb_stage #(
@@ -919,14 +897,14 @@ module ibex_core import ibex_pkg::*; #(
     .rf_waddr_id_i(rf_waddr_id),
     .rf_wdata_id_i(rf_wdata_id),
     .rf_we_id_i   (rf_we_id),
-    .pac_reg_addr_i (pac_regs_waddr_id),
-    .pac_reg_we_i   (pac_regs_we_id),
+    .pac_reg_addr_i (mithril_pac_regs_waddr_id),
     .pac_reg_wdata_i(rf_wdata_lsu),
+    .pac_reg_we_i   (mithril_pac_regs_we_id),
 
     .dummy_instr_id_i(dummy_instr_id),
 
     .rf_wdata_lsu_i(rf_wdata_lsu),
-    .rf_we_lsu_i   (~pac_regs_we_wb & rf_we_lsu),
+    .rf_we_lsu_i   (~mithril_pac_regs_we_wb & rf_we_lsu),
 
     .rf_wdata_fwd_wb_o(rf_wdata_fwd_wb),
 
@@ -934,9 +912,9 @@ module ibex_core import ibex_pkg::*; #(
     .rf_wdata_wb_o(rf_wdata_wb),
     .rf_we_wb_o   (rf_we_wb),
 
-    .pac_reg_addr_wb_o(pac_regs_waddr_wb),
-    .pac_reg_we_wb_o  (pac_regs_we_wb),
-    .pac_reg_wdata_wb_o(pac_regs_wdata_wb),
+    .pac_reg_addr_wb_o(mithril_pac_regs_waddr_wb),
+    .pac_reg_we_wb_o  (mithril_pac_regs_we_wb),
+    .pac_reg_wdata_wb_o(mithril_pac_regs_wdata_wb),
 
     .dummy_instr_wb_o(dummy_instr_wb),
 

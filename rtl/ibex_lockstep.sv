@@ -408,8 +408,6 @@ module ibex_lockstep import ibex_pkg::*; #(
     .sp_reg_i            (),
     .s0_reg_i            (),
     .s1_reg_i            (),
-    .s2_reg_i            (),
-    .s3_reg_i            (),
 
 
 `ifdef RVFI
