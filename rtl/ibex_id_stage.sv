@@ -323,13 +323,13 @@ module ibex_id_stage #(
   logic call_instr_first_cycle;
   logic [31:0] link_addr;
   logic trap_detected_q;
-  logic mithril_pac_gen_dec;
+  logic mithril_pac_sign_dec;
   logic mithril_pac_auth_dec;
   logic mithril_pac_store_dec;
   logic mithril_pac_load_dec;
   logic mithril_pac_lsu_addr_incr_q;
-  logic mithril_pac_gen_started_q;
-  logic mithril_pac_gen_instr_first_cycle;
+  logic mithril_pac_sign_started_q;
+  logic mithril_pac_sign_instr_first_cycle;
   logic mithril_pac_auth_instr_first_cycle;
   logic mithril_pac_auth_started_q;
 
@@ -558,7 +558,7 @@ module ibex_id_stage #(
     .branch_in_dec_o(branch_in_dec),
 
     // Mithril PAC
-    .pac_gen_o(mithril_pac_gen_dec),
+    .pac_sign_o(mithril_pac_sign_dec),
     .pac_auth_o(mithril_pac_auth_dec),
     .pac_store_o(mithril_pac_store_dec),
     .pac_load_o(mithril_pac_load_dec)
@@ -708,14 +708,14 @@ module ibex_id_stage #(
     .mithril_sec_violation_ack_o
   );
 
-      // Mithril PAC: Detect function returns for authentication
-  assign ret_match = (jump_in_dec && (rf_waddr_id == 5'd0) && 
-                     (rf_raddr_a_o == 5'd1) && (imm_i_type == 32'd0) || mret_insn_dec);
+  // Mithril PAC: Detect function returns for authentication
+  assign ret_match = (jump_in_dec & (rf_waddr_id == 5'd0) &
+                     (rf_raddr_a_o == 5'd1) & (imm_i_type == 32'd0) | mret_insn_dec);
 
-  assign ret_instr_first_cycle = ret_match & ~ret_instr_seen_q & instr_first_cycle;
+  assign ret_instr_first_cycle = ret_match & ~ret_instr_seen_q;
 
-  assign call_match = (jump_in_dec && (rf_waddr_id == 5'd1));
-  assign call_instr_first_cycle = call_match & ~call_instr_seen_q & instr_first_cycle;
+  assign call_match = (jump_in_dec & (rf_waddr_id == 5'd1)) ;
+  assign call_instr_first_cycle = call_match & ~call_instr_seen_q;
   assign link_addr = pc_id_i + (instr_is_compressed_i ? 32'd2 : 32'd4);
 
   
@@ -725,12 +725,12 @@ module ibex_id_stage #(
       trap_detected_q <= 1'b0;
       call_instr_seen_q <= 1'b0;
     end else begin
-      if(ret_match  && instr_executing)
+      if(ret_match  && instr_done)
         ret_instr_seen_q <= 1'b1;
       if(ret_instr_seen_q && ~ret_match) 
         ret_instr_seen_q <= 1'b0;
 
-      if(call_match && instr_executing)
+      if(call_match && instr_done)
         call_instr_seen_q <= 1'b1;
       if(call_instr_seen_q && ~call_match) 
         call_instr_seen_q <= 1'b0;
@@ -783,24 +783,24 @@ module ibex_id_stage #(
 
   // Verify signal: triggered by implicit return checks OR explicit pac.auth instruction
   // Disabled in debug mode to prevent false PAC verification failures when entering debug ROM
-  assign mithril_pac_verify_o = ~debug_mode_o & ~stall_id & instr_executing & (ret_instr_first_cycle | mithril_pac_auth_instr_first_cycle);
+  assign mithril_pac_verify_o = ~debug_mode_o  & instr_done & (ret_instr_first_cycle | mithril_pac_auth_instr_first_cycle);
 
 
 
 
   // PAC calculation disabled in debug mode to prevent incorrect PAC generation 
   // when CPU branches to debug ROM via exception-like mechanism
-  assign mithril_pac_calc_o = ~debug_mode_o & ~stall_id & instr_executing & (mithril_pac_gen_instr_first_cycle | 
-                              call_instr_first_cycle | trap_detected_q);
+  assign mithril_pac_calc_o = ~debug_mode_o & (instr_done & (mithril_pac_sign_instr_first_cycle | 
+                              call_instr_first_cycle) | trap_detected_q);
   assign mithril_pac_regs_we_o       = mithril_pac_load_dec;
-  // Because mithril_pac_gen_dec/mithril_pac_auth_dec stay high until the end of the instruction, 
+  // Because mithril_pac_sign_dec/mithril_pac_auth_dec stay high until the end of the instruction, 
   // we need to use these signals to detect the first cycle of the start instruction.
-  assign mithril_pac_gen_instr_first_cycle = mithril_pac_gen_dec & ~mithril_pac_gen_started_q;
+  assign mithril_pac_sign_instr_first_cycle = mithril_pac_sign_dec & ~mithril_pac_sign_started_q;
   assign mithril_pac_auth_instr_first_cycle = mithril_pac_auth_dec & ~mithril_pac_auth_started_q; 
   always_ff @( posedge clk_i or negedge rst_ni ) begin : pac_start_flop
     if(~rst_ni) begin
       mithril_pac_lsu_addr_incr_q <= 1'b0;
-      mithril_pac_gen_started_q <= 1'b0;
+      mithril_pac_sign_started_q <= 1'b0;
       mithril_pac_auth_started_q <= 1'b0;
       mithril_pac_lsu_first_beat_done_q <= 1'b0;
     end else begin
@@ -813,8 +813,8 @@ module ibex_id_stage #(
             mithril_pac_lsu_addr_incr_q <= 1'b1;
           mithril_pac_lsu_first_beat_done_q <= 1'b1;
       end
-      if (mithril_pac_gen_instr_first_cycle && instr_executing) begin
-        mithril_pac_gen_started_q <= 1'b1;
+      if (mithril_pac_sign_instr_first_cycle && instr_executing) begin
+        mithril_pac_sign_started_q <= 1'b1;
       end
       if (mithril_pac_auth_instr_first_cycle && instr_executing) begin
         mithril_pac_auth_started_q <= 1'b1;
@@ -824,7 +824,7 @@ module ibex_id_stage #(
       end
       if(instr_done || flush_id || ~instr_valid_i) begin
         mithril_pac_lsu_addr_incr_q <= 1'b0; 
-        mithril_pac_gen_started_q    <= 1'b0;
+        mithril_pac_sign_started_q    <= 1'b0;
         mithril_pac_auth_started_q   <= 1'b0;
         mithril_pac_lsu_first_beat_done_q <= 1'b0;
       end

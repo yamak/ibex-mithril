@@ -125,6 +125,7 @@
    output logic [31:0]          mithril_pac_k1_o,           // PAC Key 1 (write-once)
    output logic [31:0]          mithril_pac_k2_o,           // PAC Key 2 (write-once)
    output logic [31:0]          mithril_pac_k3_o,           // PAC Key 3 (write-once)
+   output logic [31:0]          mithril_pac_ctx_o,          // PAC Context (readable/writable)
    output logic                 mithril_pac_en_o            // PAC enable
  );
  
@@ -256,6 +257,10 @@
    // Write-once flags - once written, keys cannot be modified
    logic        mithril_pac_k0_written_q, mithril_pac_k1_written_q;
    logic        mithril_pac_k2_written_q, mithril_pac_k3_written_q;
+    // PAC Context CSR
+   logic [31:0]  mithril_pac_ctx_q;
+   logic         mithril_pac_ctx_en;
+
    // PAC control CSR (write-once enable bit)
    typedef struct packed {
      logic [31:1] rsvd;
@@ -263,6 +268,7 @@
    } pac_ctrl_t;
    pac_ctrl_t    mithril_pac_ctrl_q, mithril_pac_ctrl_d;
    logic         mithril_pac_ctrl_we;
+
  
    // PMP Signals
    logic [31:0]                 pmp_addr_rdata  [PMP_MAX_REGIONS];
@@ -574,6 +580,9 @@
        CSR_MITHRIL_PAC_K1:  csr_rdata_int = '0;
        CSR_MITHRIL_PAC_K2:  csr_rdata_int = '0;
        CSR_MITHRIL_PAC_K3:  csr_rdata_int = '0;
+
+       // PAC Context (readable/writable)
+       CSR_MITHRIL_PAC_CTX: csr_rdata_int = mithril_pac_ctx_q;
  
        default: begin
          illegal_csr = 1'b1;
@@ -634,6 +643,8 @@
      // PAC CTRL defaults
      mithril_pac_ctrl_d  = mithril_pac_ctrl_q;
      mithril_pac_ctrl_we = 1'b0;
+     // PAC CTX default
+     mithril_pac_ctx_en  = 1'b0;
  
      mcountinhibit_we = 1'b0;
      mhpmcounter_we   = '0;
@@ -763,6 +774,9 @@
            mithril_pac_ctrl_we = csr_we_int;
            mithril_pac_ctrl_d.en  = mithril_pac_ctrl_q.en | csr_wdata_int[0];
            mithril_pac_ctrl_d.rsvd = '0; 
+         end
+         CSR_MITHRIL_PAC_CTX: begin
+           mithril_pac_ctx_en = 1'b1;
          end
 
          default:;
@@ -914,6 +928,7 @@
    assign mithril_pac_k1_o  = mithril_pac_k1_q;
    assign mithril_pac_k2_o  = mithril_pac_k2_q;
    assign mithril_pac_k3_o  = mithril_pac_k3_q;
+   assign mithril_pac_ctx_o = mithril_pac_ctx_q;
  
    // Qualify incoming interrupt requests in mip CSR with mie CSR for controller and to re-enable
    // clock upon WFI (must be purely combinational).
@@ -1230,8 +1245,22 @@
      .rd_data_o (mithril_pac_k3_q),
      .rd_error_o()
    );
- 
- 
+
+   // MITHRIL_PAC_CTX
+   ibex_csr #(
+     .Width     (32),
+     .ShadowCopy(1'b0),
+     .ResetValue('0)
+   ) u_mithril_pac_ctx_csr (
+     .clk_i     (clk_i),
+     .rst_ni    (rst_ni),
+     .wr_data_i (csr_wdata_int),
+     .wr_en_i   (mithril_pac_ctx_en),
+     .rd_data_o (mithril_pac_ctx_q),
+     .rd_error_o()
+   );
+
+
    // -----------------
    // PMP registers
    // -----------------

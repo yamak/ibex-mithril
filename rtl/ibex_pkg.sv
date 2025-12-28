@@ -606,7 +606,8 @@
    CSR_MITHRIL_PAC_K0   = 12'hBC1,
    CSR_MITHRIL_PAC_K1   = 12'hBC2,
    CSR_MITHRIL_PAC_K2   = 12'hBC3,
-   CSR_MITHRIL_PAC_K3   = 12'hBC4
+   CSR_MITHRIL_PAC_K3   = 12'hBC4,
+   CSR_MITHRIL_PAC_CTX  = 12'hBC5 
  } csr_num_e;
 
  // CSR pmp-related offsets

@@ -848,15 +848,15 @@ module ibex_core import ibex_pkg::*; #(
   logic        mithril_pac_valid;  // QARMA valid signal for hazard detection
   logic [31:0] mithril_pac_s0_fwd;  // Forwarded s0 from ID stage
   logic [31:0] mithril_pac_s1_fwd;  // Forwarded s1 from ID stage
-
+  logic [63:0] mithril_pac_tweak;
+  logic [31:0] mithril_pac_ctx;
   assign mithril_pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
-
+  assign mithril_pac_tweak = {mithril_pac_s1_fwd ^ mithril_pac_ctx, mithril_pac_s0_fwd ^ mithril_pac_ctx};
   mithril_pac_unit u_mithril_pac_unit (
     .clk_i        (clk_i),
     .rst_ni       (rst_ni),
     .key_i        ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
-    .s0_i         (mithril_pac_s0_fwd),  // Use forwarded value for correct PAC tweak
-    .s1_i         (mithril_pac_s1_fwd),  // Use forwarded value for correct PAC tweak
+    .tweak_i      (mithril_pac_tweak),
     .message_i    (mithril_pac_message),
     .calculate_i  (mithril_pac_calc),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
@@ -1196,7 +1196,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_k1_o           (mithril_pac_k1),
     .mithril_pac_k2_o           (mithril_pac_k2),
     .mithril_pac_k3_o           (mithril_pac_k3),
-    .mithril_pac_en_o           (mithril_pac_en)
+    .mithril_pac_en_o           (mithril_pac_en),
+    .mithril_pac_ctx_o          (mithril_pac_ctx)
   );
 
   // These assertions are in top-level as instr_valid_id required as the enable term
