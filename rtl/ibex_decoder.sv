@@ -97,7 +97,7 @@ module ibex_decoder #(
   output logic                 branch_in_dec_o,
 
   // Mithril PAC
-  output logic                 pac_gen_o,
+  output logic                 pac_sign_o,
   output logic                 pac_auth_o,
   output logic                 pac_store_o,
   output logic                 pac_load_o
@@ -236,7 +236,7 @@ module ibex_decoder #(
     dret_insn_o           = 1'b0;
     ecall_insn_o          = 1'b0;
     wfi_insn_o            = 1'b0;
-    pac_gen_o = 1'b0;
+    pac_sign_o = 1'b0;
     pac_auth_o = 1'b0;
     pac_store_o = 1'b0;
     pac_load_o = 1'b0;
@@ -346,16 +346,16 @@ module ibex_decoder #(
 
       OPCODE_PAC: begin
         rf_ren_a_o = 1'b1;
-        rf_ren_b_o = 1'b1;  // pac.gen/pac.auth use both rs1 and rs2
+        rf_ren_b_o = 1'b1;  // pac.sign/pac.auth use both rs1 and rs2
         data_req_o = 1'b0;
         data_we_o  = 1'b0;
-        pac_gen_o = 1'b0;
+        pac_sign_o = 1'b0;
         pac_auth_o = 1'b0;
         pac_store_o = 1'b0;
         pac_load_o = 1'b0;
         unique case (instr[14:12])
         3'b000:  begin 
-          pac_gen_o  = 1'b1; // pac.gen prd, rs1, rs2
+          pac_sign_o  = 1'b1; // pac.sign prd, rs1, rs2
         end
         3'b001:  begin
           pac_auth_o  = 1'b1; // pac.auth prs, rs1, rs2
