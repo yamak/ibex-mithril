@@ -18,11 +18,7 @@ module mithril_pac_unit #(
   input logic clk_i,
   input logic rst_ni,
   input logic [127:0] key_i,
-  
-  input logic [31:0] s0_i,
-  input logic [31:0] s1_i,
-  
-  // Message source selection
+  input logic [63:0] tweak_i,
   input logic [63:0] message_i,
   
   // Control signals - can be asserted every cycle (pipelined)
@@ -47,7 +43,6 @@ module mithril_pac_unit #(
 
 localparam int PacRegAddrWidth = $clog2(NumRegs * 2);
 
-logic [63:0] tweak;
 logic [63:0] qarma_result;
 logic qarma_valid;
 logic start_qarma;
@@ -87,7 +82,7 @@ qarma64_enc_core qarma64_enc_core_inst (
     .rst_ni(rst_ni),
     .block_i(message_i),
     .key_i(key_i),
-    .tweak_i(tweak),
+    .tweak_i(tweak_i),
     .start_i(start_qarma),
     .valid_o(qarma_valid),
     .result_o(qarma_result)
@@ -138,7 +133,6 @@ always_comb begin
   end
 end
 
-assign tweak = {s1_i, s0_i};
 assign valid_o = qarma_valid;
 assign pac_mismatch_o = pac_mismatch_q | pac_mismatch_d;
 
