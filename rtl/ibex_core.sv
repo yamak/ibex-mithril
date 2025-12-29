@@ -858,7 +858,7 @@ module ibex_core import ibex_pkg::*; #(
     .key_i        ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
     .tweak_i      (mithril_pac_tweak),
     .message_i    (mithril_pac_message),
-    .calculate_i  (mithril_pac_calc),
+    .calculate_i  (mithril_pac_calc & mithril_pac_en),
     .verify_i     (mithril_pac_verify & mithril_pac_en),
     .valid_o      (mithril_pac_valid),
     .pac_mismatch_o(mithril_pac_mismatch),
