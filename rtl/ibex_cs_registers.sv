@@ -120,14 +120,16 @@
    input  logic                 mul_wait_i,                  // core waiting for multiply
    input  logic                 div_wait_i,                  // core waiting for divide
    
-   // Mithril PAC interface  
-   output logic [31:0]          mithril_pac_k0_o,           // PAC Key 0 (write-once)
-   output logic [31:0]          mithril_pac_k1_o,           // PAC Key 1 (write-once)
-   output logic [31:0]          mithril_pac_k2_o,           // PAC Key 2 (write-once)
-   output logic [31:0]          mithril_pac_k3_o,           // PAC Key 3 (write-once)
-   output logic [31:0]          mithril_pac_ctx_o,          // PAC Context (readable/writable)
-   output logic                 mithril_pac_en_o            // PAC enable
- );
+  // Mithril PAC interface  
+  output logic [31:0]          mithril_pac_k0_o,           // PAC Key 0 (write-once)
+  output logic [31:0]          mithril_pac_k1_o,           // PAC Key 1 (write-once)
+  output logic [31:0]          mithril_pac_k2_o,           // PAC Key 2 (write-once)
+  output logic [31:0]          mithril_pac_k3_o,           // PAC Key 3 (write-once)
+  output logic [31:0]          mithril_pac_ctx_o,          // PAC Context (readable/writable)
+  output logic                 mithril_pac_en_o,           // PAC enable
+  output logic                 mithril_pac_spf_en_o,       // SPF enable
+  output logic [3:0]           mithril_pac_spf_period_o    // TRNG trigger period
+);
  
    import ibex_pkg::*;
  
@@ -261,13 +263,15 @@
    logic [31:0]  mithril_pac_ctx_q;
    logic         mithril_pac_ctx_en;
 
-   // PAC control CSR (write-once enable bit)
-   typedef struct packed {
-     logic [31:1] rsvd;
-     logic        en;
-   } pac_ctrl_t;
-   pac_ctrl_t    mithril_pac_ctrl_q, mithril_pac_ctrl_d;
-   logic         mithril_pac_ctrl_we;
+  // PAC control CSR (bit0: PAC enable, bit1: SPF enable, bits[5:2]: TRNG period)
+  typedef struct packed {
+    logic [31:6] rsvd;
+    logic [3:0]  spf_trng_period;  // TRNG trigger period = 128 * (N+1) cycles
+    logic        spf_en;           // Stochastic Pipeline Flooding enable
+    logic        en;               // PAC enable
+  } pac_ctrl_t;
+  pac_ctrl_t    mithril_pac_ctrl_q, mithril_pac_ctrl_d;
+  logic         mithril_pac_ctrl_we;
 
  
    // PMP Signals
@@ -770,11 +774,13 @@
          CSR_MITHRIL_PAC_K3: begin
            mithril_pac_k3_en = ~mithril_pac_k3_written_q;
          end
-         CSR_MITHRIL_PAC_CTRL: begin
-           mithril_pac_ctrl_we = csr_we_int;
-           mithril_pac_ctrl_d.en  = mithril_pac_ctrl_q.en | csr_wdata_int[0];
-           mithril_pac_ctrl_d.rsvd = '0; 
-         end
+        CSR_MITHRIL_PAC_CTRL: begin
+          mithril_pac_ctrl_we = csr_we_int;
+          mithril_pac_ctrl_d.en  = mithril_pac_ctrl_q.en | csr_wdata_int[0];
+          mithril_pac_ctrl_d.spf_en = mithril_pac_ctrl_q.spf_en | csr_wdata_int[1];
+          mithril_pac_ctrl_d.spf_trng_period = csr_wdata_int[5:2];
+          mithril_pac_ctrl_d.rsvd = '0; 
+        end
          CSR_MITHRIL_PAC_CTX: begin
            mithril_pac_ctx_en = 1'b1;
          end
@@ -923,12 +929,14 @@
    assign debug_ebreakm_o     = dcsr_q.ebreakm;
    assign debug_ebreaku_o     = dcsr_q.ebreaku;
  
-   // Mithril PAC outputs
-   assign mithril_pac_k0_o  = mithril_pac_k0_q;
-   assign mithril_pac_k1_o  = mithril_pac_k1_q;
-   assign mithril_pac_k2_o  = mithril_pac_k2_q;
-   assign mithril_pac_k3_o  = mithril_pac_k3_q;
-   assign mithril_pac_ctx_o = mithril_pac_ctx_q;
+  // Mithril PAC outputs
+  assign mithril_pac_k0_o  = mithril_pac_k0_q;
+  assign mithril_pac_k1_o  = mithril_pac_k1_q;
+  assign mithril_pac_k2_o  = mithril_pac_k2_q;
+  assign mithril_pac_k3_o  = mithril_pac_k3_q;
+  assign mithril_pac_ctx_o = mithril_pac_ctx_q;
+  assign mithril_pac_spf_en_o = mithril_pac_ctrl_q.spf_en;
+  assign mithril_pac_spf_period_o = mithril_pac_ctrl_q.spf_trng_period;
  
    // Qualify incoming interrupt requests in mip CSR with mie CSR for controller and to re-enable
    // clock upon WFI (must be purely combinational).

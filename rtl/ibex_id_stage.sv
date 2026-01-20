@@ -205,7 +205,9 @@ module ibex_id_stage #(
   output logic [63:0]               mithril_pac_message_o,
   output logic [31:0]               mithril_pac_s0_fwd_o,  // Forwarded s0 for PAC tweak
   output logic [31:0]               mithril_pac_s1_fwd_o,  // Forwarded s1 for PAC tweak
-  input logic                       mithril_pac_valid_i  // QARMA valid signal for hazard detection
+  input logic                       mithril_pac_valid_i,  // Pac valid signal for hazard detection
+  input logic                       mithril_pac_busy_i,   // Pac busy signal (stage1 occupied)
+  input logic                       mithril_pac_en_i      // PAC enable signal from CSR
 );
 
   import ibex_pkg::*;
@@ -246,6 +248,7 @@ module ibex_id_stage #(
   logic        stall_wb;
   logic        flush_id;
   logic        multicycle_done;
+  logic        stall_pac_busy;
 
   logic        mem_resp_intg_err;
 
@@ -712,10 +715,10 @@ module ibex_id_stage #(
   assign ret_match = (jump_in_dec & (rf_waddr_id == 5'd0) &
                      (rf_raddr_a_o == 5'd1) & (imm_i_type == 32'd0) | mret_insn_dec);
 
-  assign ret_instr_first_cycle = ret_match & ~ret_instr_seen_q;
+  assign ret_instr_first_cycle = ret_match & ~ret_instr_seen_q & instr_done;
 
   assign call_match = (jump_in_dec & (rf_waddr_id == 5'd1)) ;
-  assign call_instr_first_cycle = call_match & ~call_instr_seen_q;
+  assign call_instr_first_cycle = call_match & ~call_instr_seen_q & instr_done;
   assign link_addr = pc_id_i + (instr_is_compressed_i ? 32'd2 : 32'd4);
 
   
@@ -781,22 +784,28 @@ module ibex_id_stage #(
 
   
 
-  // Verify signal: triggered by implicit return checks OR explicit pac.auth instruction
+  // Verify signal: triggered by implicit return checks (when pac_en) OR explicit pac.auth instruction (always)
   // Disabled in debug mode to prevent false PAC verification failures when entering debug ROM
-  assign mithril_pac_verify_o = ~debug_mode_o  & instr_done & (ret_instr_first_cycle | mithril_pac_auth_instr_first_cycle);
-
-
-
+  // pac_en gates only automatic ret verification, explicit pac.auth always works
+  assign mithril_pac_verify_o = ~debug_mode_o & instr_done & 
+                                ((ret_instr_first_cycle & mithril_pac_en_i) | mithril_pac_auth_instr_first_cycle);
 
   // PAC calculation disabled in debug mode to prevent incorrect PAC generation 
   // when CPU branches to debug ROM via exception-like mechanism
-  assign mithril_pac_calc_o = ~debug_mode_o & (instr_done & (mithril_pac_sign_instr_first_cycle | 
-                              call_instr_first_cycle) | trap_detected_q);
+  // pac_en gates only automatic call/trap calc, explicit pac.sign always works
+  assign mithril_pac_calc_o = ~debug_mode_o & 
+                              ((instr_done & mithril_pac_sign_instr_first_cycle) |  // explicit pac.sign: always
+                               (instr_done & call_instr_first_cycle & mithril_pac_en_i) |  // call: only if pac_en
+                               (trap_detected_q & mithril_pac_en_i));  // trap: only if pac_en
   assign mithril_pac_regs_we_o       = mithril_pac_load_dec;
   // Because mithril_pac_sign_dec/mithril_pac_auth_dec stay high until the end of the instruction, 
   // we need to use these signals to detect the first cycle of the start instruction.
-  assign mithril_pac_sign_instr_first_cycle = mithril_pac_sign_dec & ~mithril_pac_sign_started_q;
-  assign mithril_pac_auth_instr_first_cycle = mithril_pac_auth_dec & ~mithril_pac_auth_started_q; 
+  // By qualifying PAC calculate/verify signals with instr_done, we ensure that when stall_pac_busy (or stall_id) is asserted 
+  // (i.e., while the PAC unit is busy), no calculate or verify requests are issued in that cycle. This mechanism guarantees 
+  // that calculate or verify commands are not lost during periods when the pipeline is stalled due to the PAC unit being busy.
+  // Once the stall is deasserted and instr_done goes high, any pending PAC operation is issued reliably.
+  assign mithril_pac_sign_instr_first_cycle = mithril_pac_sign_dec & ~mithril_pac_sign_started_q & instr_done;
+  assign mithril_pac_auth_instr_first_cycle = mithril_pac_auth_dec & ~mithril_pac_auth_started_q & instr_done; 
   always_ff @( posedge clk_i or negedge rst_ni ) begin : pac_start_flop
     if(~rst_ni) begin
       mithril_pac_lsu_addr_incr_q <= 1'b0;
@@ -839,6 +848,16 @@ module ibex_id_stage #(
 
 
   assign multdiv_en_dec  = mult_en_dec | div_en_dec;
+  
+  // Pac Busy Stall: If QARMA is busy and a new PAC instruction is issued, stall the pipeline
+  // NOTE: We use decoded signals here instead of mithril_pac_calc_o/verify_o to break the
+  // combinational loop: stall_id → instr_done → mithril_pac_verify_o → stall_pac_busy → stall_id
+  // The decoded signals (mithril_pac_sign_dec, mithril_pac_auth_dec, call_match, ret_match) 
+  // don't depend on instr_done, breaking the circular dependency.
+  logic pac_instruction_pending;
+  assign pac_instruction_pending = mithril_pac_sign_dec | mithril_pac_auth_dec | call_match | ret_match;
+  assign stall_pac_busy = mithril_pac_busy_i & pac_instruction_pending & instr_first_cycle;
+  
   // PAC Store Hazard: When pac.store is in its first cycle and QARMA just produced valid output,
   // the pac_regs are being updated at this rising edge. Gate lsu_req_dec to prevent LSU request
   // and let stall_mem naturally become 0 (since it depends on lsu_req_dec).
@@ -1086,13 +1105,14 @@ module ibex_id_stage #(
   // Stall ID/EX stage for reason that relates to instruction in ID/EX, update assertion below if
   // modifying this.
   assign stall_id = stall_ld_hz | stall_mem | stall_multdiv | stall_jump | stall_branch |
-                      stall_alu | stall_pac_store_hz;
+                      stall_alu | stall_pac_store_hz | stall_pac_busy;
 
   // Generally illegal instructions have no reason to stall, however they must still stall waiting
   // for outstanding memory requests so exceptions related to them take priority over the illegal
   // instruction exception.
   `ASSERT(IllegalInsnStallMustBeMemStall, illegal_insn_o & stall_id |-> stall_mem &
-    ~(stall_ld_hz | stall_multdiv | stall_jump | stall_branch | stall_alu | stall_pac_store_hz))
+    ~(stall_ld_hz | stall_multdiv | stall_jump | stall_branch | stall_alu | stall_pac_store_hz | 
+      stall_pac_busy))
 
   assign instr_done = ~stall_id & ~flush_id & instr_executing;
 

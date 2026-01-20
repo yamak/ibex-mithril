@@ -39,6 +39,11 @@ filesets:
       - rtl/ibex_pmp_reset_default.svh: {is_include_file: true}
     file_type: systemVerilogSource
 
+  files_rtl_vhdl:
+    files:
+      - shared/rtl/neoTRNG.vhd
+    file_type: vhdlSource
+
   files_lint_verilator:
     files:
       - lint/verilator_waiver.vlt: {file_type: vlt}
@@ -168,6 +173,7 @@ targets:
     filesets:
       - tool_verilator ? (files_lint_verilator)
       - files_rtl
+      - "!tool_verilator ? (files_rtl_vhdl)"
       - files_check_tool_requirements
     toplevel: ibex_core
     parameters:

@@ -14,10 +14,17 @@ filesets:
       - rtl/ram_1p.sv
       - rtl/bus.sv
       - rtl/timer.sv
+      - rtl/xorshift128_prng.sv
       - rtl/qarma64_enc_core.sv
     file_type: systemVerilogSource
+
+  files_vhdl:
+    files:
+      - rtl/neoTRNG.vhd
+    file_type: vhdlSource
 
 targets:
   default:
     filesets:
       - files_sv
+      - files_vhdl

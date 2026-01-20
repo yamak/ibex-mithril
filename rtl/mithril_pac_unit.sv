@@ -38,7 +38,16 @@ module mithril_pac_unit #(
   output logic [31:0] rdata_o,
 
   input  logic [31:0] wdata_i,
-  input  logic we_i
+  input  logic we_i,
+  
+  // SPF (Stochastic Pipeline Flooding) interface
+  output logic busy_o,
+  input logic spf_enable_i,
+  input logic [3:0] spf_trng_period_i,
+  // TRNG interface (external to this module)
+  output logic trng_enable_o,
+  input logic [7:0] trng_data_i,
+  input logic trng_valid_i
 );
 
 localparam int PacRegAddrWidth = $clog2(NumRegs * 2);
@@ -76,7 +85,51 @@ end
 
 assign rdata_o = pac_regs[raddr_i[PacRegAddrWidth-1:0]];
 
-// QARMA instance - fully pipelined, 2-cycle latency
+// ============================================================================
+// SPF (Stochastic Pipeline Flooding) - TRNG and PRNG management
+// ============================================================================
+
+logic [127:0] prng_random;
+logic [15:0] trng_period_cnt;
+logic trng_seed_trigger;
+
+// TRNG seeding period counter
+// Period = 2048 * (spf_trng_period_i + 1) cycles
+// Range: 2048 to 32768 cycles (for spf_trng_period_i = 0 to 15)
+// This provides a good balance between entropy refresh and power consumption
+always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+        trng_period_cnt <= 16'd0;
+    end else if (spf_enable_i) begin
+        // Calculate period: 2048 * (N + 1)
+        // 2048 = 2^11, multiply by (spf_trng_period_i + 1)
+        if (trng_period_cnt == (16'd2048 * ({12'd0, spf_trng_period_i} + 16'd1) - 16'd1)) begin
+            trng_period_cnt <= 16'd0;
+        end else begin
+            trng_period_cnt <= trng_period_cnt + 16'd1;
+        end
+    end else begin
+        trng_period_cnt <= 16'd0;
+    end
+end
+
+assign trng_seed_trigger = (trng_period_cnt == 16'd0) && spf_enable_i;
+assign trng_enable_o = trng_seed_trigger;  // Output to enable TRNG
+
+// Xorshift128 PRNG instance for SPF
+xorshift128_prng u_xorshift_prng (
+    .clk_i          (clk_i),
+    .rst_ni         (rst_ni),
+    .enable_i       (spf_enable_i),
+    .seed_enable_i  (trng_seed_trigger),
+    .seed_data_i    (trng_data_i),
+    .seed_valid_i   (trng_valid_i),
+    .random_o       (prng_random)
+);
+
+// ============================================================================
+// QARMA instance - fully pipelined, 2-cycle latency with SPF support
+// ============================================================================
 qarma64_enc_core qarma64_enc_core_inst (
     .clk_i(clk_i),
     .rst_ni(rst_ni),
@@ -85,7 +138,10 @@ qarma64_enc_core qarma64_enc_core_inst (
     .tweak_i(tweak_i),
     .start_i(start_qarma),
     .valid_o(qarma_valid),
-    .result_o(qarma_result)
+    .result_o(qarma_result),
+    .busy_o(busy_o),
+    .spf_enable_i(spf_enable_i),
+    .random_data_i(prng_random)
 );
 
 // Pipeline registers for operation tracking

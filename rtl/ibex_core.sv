@@ -380,6 +380,9 @@ module ibex_core import ibex_pkg::*; #(
   logic [31:0] mithril_pac_k2;
   logic [31:0] mithril_pac_k3;
   logic        mithril_pac_en;
+  logic        mithril_pac_spf_en;
+  logic [3:0]  mithril_pac_spf_period;
+  logic        mithril_pac_busy;
 
   assign current_pc_o = pc_id;
   //////////////////////
@@ -719,7 +722,9 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_message_o      (mithril_pac_message),
     .mithril_pac_s0_fwd_o       (mithril_pac_s0_fwd),
     .mithril_pac_s1_fwd_o       (mithril_pac_s1_fwd),
-    .mithril_pac_valid_i        (mithril_pac_valid)
+    .mithril_pac_valid_i        (mithril_pac_valid),
+    .mithril_pac_busy_i         (mithril_pac_busy),
+    .mithril_pac_en_i           (mithril_pac_en)
     );
 
   // for RVFI only
@@ -852,14 +857,58 @@ module ibex_core import ibex_pkg::*; #(
   logic [31:0] mithril_pac_ctx;
   assign mithril_pac_regs_we_id = rf_we_lsu & mithril_pac_regs_we;
   assign mithril_pac_tweak = {mithril_pac_s1_fwd ^ mithril_pac_ctx, mithril_pac_s0_fwd ^ mithril_pac_ctx};
+  
+  // neoTRNG instance - only for real hardware, not for Verilator
+  // TRNG is controlled by mithril_pac_unit (via trng_enable)
+`ifndef VERILATOR
+  logic trng_enable;
+  logic trng_valid;
+  logic [7:0] trng_data;
+  
+  neoTRNG #(
+    .NUM_CELLS(3),
+    .NUM_INV_START(5),
+    .SIM_MODE(1'b0)
+  ) u_neotrng (
+    .clk_i(clk_i),
+    .rstn_i(rst_ni),
+    .enable_i(trng_enable),
+    .valid_o(trng_valid),
+    .data_o(trng_data)
+  );
+`else
+  // For Verilator simulation, provide a simple pseudo-random source
+  // This ensures SPF has entropy to inject during CPA analysis
+  logic trng_enable;
+  logic trng_valid;
+  logic [7:0] trng_data;
+  logic [7:0] lfsr_q;
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      lfsr_q <= 8'hAC; // Non-zero seed
+    end else if (trng_enable) begin
+      // Simple 8-bit LFSR (x^8 + x^6 + x^5 + x^4 + 1)
+      lfsr_q <= {lfsr_q[6:0], lfsr_q[7] ^ lfsr_q[5] ^ lfsr_q[4] ^ lfsr_q[3]};
+    end
+  end
+
+  assign trng_valid = trng_enable; // Immediate valid for simulation
+  assign trng_data  = lfsr_q;
+  
+  // Tie off for lint
+  logic unused_trng_enable;
+  assign unused_trng_enable = trng_enable;
+`endif
+  
   mithril_pac_unit u_mithril_pac_unit (
     .clk_i        (clk_i),
     .rst_ni       (rst_ni),
     .key_i        ({mithril_pac_k3, mithril_pac_k2, mithril_pac_k1, mithril_pac_k0}),
     .tweak_i      (mithril_pac_tweak),
     .message_i    (mithril_pac_message),
-    .calculate_i  (mithril_pac_calc & mithril_pac_en),
-    .verify_i     (mithril_pac_verify & mithril_pac_en),
+    .calculate_i  (mithril_pac_calc),  // pac_en gating moved to ID stage
+    .verify_i     (mithril_pac_verify),  // pac_en gating moved to ID stage
     .valid_o      (mithril_pac_valid),
     .pac_mismatch_o(mithril_pac_mismatch),
     .pac_mismatch_ack_i(mithril_pac_mismatch_ack),
@@ -868,7 +917,13 @@ module ibex_core import ibex_pkg::*; #(
     .raddr_i        (mithril_pac_raddr),
     .waddr_i        (mithril_pac_regs_waddr_wb),
     .wdata_i        (mithril_pac_regs_wdata_wb),
-    .we_i           (mithril_pac_regs_we_wb)
+    .we_i           (mithril_pac_regs_we_wb),
+    .busy_o         (mithril_pac_busy),
+    .spf_enable_i   (mithril_pac_spf_en),
+    .spf_trng_period_i(mithril_pac_spf_period),
+    .trng_enable_o  (trng_enable),
+    .trng_data_i    (trng_data),
+    .trng_valid_i   (trng_valid)
   );
 
   ibex_wb_stage #(
@@ -1197,7 +1252,9 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_k2_o           (mithril_pac_k2),
     .mithril_pac_k3_o           (mithril_pac_k3),
     .mithril_pac_en_o           (mithril_pac_en),
-    .mithril_pac_ctx_o          (mithril_pac_ctx)
+    .mithril_pac_ctx_o          (mithril_pac_ctx),
+    .mithril_pac_spf_en_o       (mithril_pac_spf_en),
+    .mithril_pac_spf_period_o   (mithril_pac_spf_period)
   );
 
   // These assertions are in top-level as instr_valid_id required as the enable term
