@@ -5,11 +5,15 @@
  */
 
 /**
- * \brief QARMA-64 core (Midori S-box, 64-bit block)
+ * \brief QARMA-64 core (Midori S-box, 64-bit block) with SPF support
  *
  * Implements the QARMA-64 tweakable block cipher. The pipeline runs in two
  * stages: forward (with pseudo-reflection) and backward. Synthesis-oriented,
  * single-block per start, single-cycle combinational per stage.
+ *
+ * SPF (Stochastic Pipeline Flooding) feature: When enabled, injects random
+ * data into empty pipeline stages to provide side-channel attack resistance.
+ * Random data is provided externally via random_data_i.
  *
  * \param ROUNDS Number of forward/backward rounds (default: 5)
  *
@@ -22,6 +26,9 @@
  *  - tweak_i: 64-bit tweak value
  *  - valid_o: High when result_o is valid (during STAGE2)
  *  - result_o: 64-bit output ciphertext block
+ *  - busy_o: High when stage1 is occupied
+ *  - spf_enable_i: Enable Stochastic Pipeline Flooding
+ *  - random_data_i: 128-bit random data from external PRNG (for SPF)
  */
 module qarma64_enc_core #(
     parameter int unsigned ROUNDS = 5
@@ -33,7 +40,11 @@ module qarma64_enc_core #(
     input logic [63:0] tweak_i,
     input logic start_i,
     output logic valid_o,
-    output logic [63:0] result_o
+    output logic [63:0] result_o,
+    output logic busy_o,
+    // SPF control signals
+    input logic spf_enable_i,
+    input logic [127:0] random_data_i  // Random data from external PRNG
     );
 
 /** Round constants (RC) used in forward/backward rounds */
@@ -366,7 +377,109 @@ endfunction
 
 block_t is_stage_reg, is_stage_next;
 tweak_t tweak_stage_reg, tweak_stage_next;
-logic stage2_valid_reg, stage2_valid_next;
+logic stage2_valid_reg, stage2_valid_next;      // True if stage2 has REAL data
+logic stage2_active_reg, stage2_active_next;    // True if stage2 should compute (real or dummy)
+
+// SPF (Stochastic Pipeline Flooding) signals
+block_t entropy_feedback_reg;  // Accumulates dummy results for feedback into next injection
+logic [127:0] random_key;
+logic [63:0] random_message;
+logic [63:0] random_tweak;
+logic spf_inject_stage1;
+logic spf_inject_stage2;  // Inject dummy data to stage2 when real data enters stage1
+
+// Prepare random data from external PRNG
+assign random_key     = random_data_i;
+assign random_message = {random_data_i[46:0], random_data_i[63:47]};
+assign random_tweak   = ~{random_data_i[96:64], random_data_i[127:97]};
+
+// SPF injection control logic
+// Inject random data to stage1 when:
+// 1. SPF is enabled
+// 2. Real data is in stage2 (stage2_valid_reg)
+// This acts as a natural busy signal - when stage2 is processing real data,
+// stage1 gets dummy data, effectively blocking new real operations via priority
+assign spf_inject_stage1 = spf_enable_i & stage2_valid_reg;
+
+// Inject dummy data to stage2 when real data enters stage1
+// Stage2 will reprocess previous register values with a random key
+assign spf_inject_stage2 = spf_enable_i & start_i;
+
+// ============================================================================
+// SPF Entropy Feedback Register
+// This register serves multiple critical purposes:
+//
+// 1. PREVENTS SYNTHESIS OPTIMIZATION: If we simply loaded dummy results into a 
+//    register without using them (e.g., dummy_result_reg <= result_o), the 
+//    synthesis tool would detect it as unused logic and optimize it away, 
+//    eliminating the power consumption we need for side-channel protection.
+//    By feeding this register back into compute_stage1/compute_stage2, we create
+//    a dependency that prevents the optimizer from removing it.
+//
+// 2. CREATES REGISTER ACTIVITY: Every dummy operation updates this register,
+//    generating switching activity and power consumption that masks real operations.
+//
+// Without this feedback mechanism, synthesis would eliminate dummy computation
+// registers as "dead logic", defeating the entire SPF countermeasure.
+// ============================================================================
+always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+        entropy_feedback_reg <= 64'h0;
+    end else if (spf_enable_i) begin
+        if (stage2_active_reg || spf_inject_stage2) begin
+             entropy_feedback_reg <= entropy_feedback_reg ^ result_o;
+        end
+    end
+end
+
+`ifdef VERILATOR
+// ============================================================================
+// SCA TRAP REGISTER (For CPA Analysis)
+// This block is independent from cipher logic, purely for side-channel testing.
+// It provides a controlled leakage point that matches Python CPA model.
+// Only enabled for Verilator simulation.
+// ============================================================================
+logic [7:0] sca_trap_reg /*verilator public*/;
+logic [7:0] sca_trap_next /*verilator public*/;  // Delayed copy (holds previous cycle's value for HD calc)
+
+
+logic [2:0] leak_hold_counter; 
+
+always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+        sca_trap_reg <= 8'b0;
+        leak_hold_counter <= 0;
+    end else begin
+        if (start_i) begin
+            leak_hold_counter <= 3'd4; 
+            
+            if (spf_inject_stage1 | spf_inject_stage2)
+                sca_trap_reg <= random_data_i[7:0]; // SPF
+            else
+                sca_trap_reg <= block_i[7:0] ^ key_i[7:0]; // LEAK
+        end 
+        else if (leak_hold_counter > 0) begin
+            leak_hold_counter <= leak_hold_counter - 1;
+        end 
+        else begin
+            sca_trap_reg <= 8'b0; 
+        end
+    end
+end
+
+// Delay register: holds previous cycle's sca_trap_reg value
+// This creates Hamming Distance calculation that naturally implements HW model:
+//   Cycle N:   sca_trap_reg=LEAK,  sca_trap_next=0      → HD(LEAK,0)=HW(LEAK) ✓
+//   Cycle N+1: sca_trap_reg=LEAK,  sca_trap_next=LEAK   → HD(LEAK,LEAK)=0
+//   Cycle N+5: sca_trap_reg=0,     sca_trap_next=LEAK   → HD(0,LEAK)=HW(LEAK) ✓
+always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+        sca_trap_next <= 8'b0;
+    end else begin
+        sca_trap_next <= sca_trap_reg;
+    end
+end
+`endif
 
 /** Register stage: state/tweak/state machine */
 always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -374,26 +487,63 @@ always_ff @(posedge clk_i or negedge rst_ni) begin
         is_stage_reg <= 0;
         tweak_stage_reg <= 0;
         stage2_valid_reg <= 0;
+        stage2_active_reg <= 0;
     end
     else begin
         is_stage_reg <= is_stage_next;
         tweak_stage_reg <= tweak_stage_next;
         stage2_valid_reg <= stage2_valid_next;
+        stage2_active_reg <= stage2_active_next;
     end
 end
 
-/** Combinational next-state/output logic */
 always_comb begin
+    block_t stage2_result;
+    
     is_stage_next = is_stage_reg;
     tweak_stage_next = tweak_stage_reg;
     stage2_valid_next = 1'b0;
-    if(start_i) begin
-        compute_stage1(key_i, tweak_i, block_i, is_stage_next, tweak_stage_next);
-        stage2_valid_next = 1'b1;
+    stage2_active_next = 1'b0;
+    stage2_result = 64'b0;  
+    result_o = 64'b0;       
+    
+    // STAGE 1: Compute forward rounds
+    // SPF injection has PRIORITY over real operations (acts as busy protection)
+    // When stage2 is processing real data, stage1 gets dummy data
+    if (spf_inject_stage1) begin
+        // Dummy data - compute stage1 with random key/tweak/message
+        // XOR with entropy_feedback_reg:
+        // Creates dependency chain that prevents synthesis from optimizing away
+        // the feedback register (if unused, would be removed as dead logic)
+        compute_stage1(random_key, random_tweak, random_message ^ entropy_feedback_reg, is_stage_next, tweak_stage_next);
+        stage2_valid_next = 1'b0;    
+        stage2_active_next = 1'b0; 
     end
-    compute_stage2(key_i, tweak_stage_reg, is_stage_reg, result_o);
+    else if(start_i) begin
+        // Real data - compute stage1 with actual key/tweak/message
+        compute_stage1(key_i, tweak_i, block_i, is_stage_next, tweak_stage_next);
+        stage2_valid_next = 1'b1;    
+        stage2_active_next = 1'b1;  
+    end
+    
+    // STAGE 2: Compute backward rounds
+    // Two scenarios:
+    // 1. SPF injection: Real data just entered stage1, compute stage2 with dummy data
+    // 2. Normal: Process data from stage1 previous cycle
+    if (spf_inject_stage2) begin
+        compute_stage2(random_key, random_tweak, random_message ^ entropy_feedback_reg, stage2_result);
+        result_o = stage2_result; 
+    end
+    else if (stage2_active_reg) begin
+        // Normal operation: process registered data from stage1 (previous cycle)
+        compute_stage2(key_i, tweak_stage_reg, is_stage_reg, stage2_result);
+        result_o = stage2_result;
+    end
 end
 
 assign valid_o = stage2_valid_reg;
+
+
+assign busy_o = spf_inject_stage1;
 
 endmodule
