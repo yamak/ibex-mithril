@@ -112,7 +112,10 @@ module ibex_controller #(
                                                          // instruction
   input  logic                  mithril_ext_stall_i,
   input  logic                  mithril_sec_violation_i,
-  output logic                  mithril_sec_violation_ack_o
+  output logic                  mithril_sec_violation_ack_o,
+  
+  // Zicfilp LPAD violation
+  input  logic                  lpad_violation_i
 );
   import ibex_pkg::*;
 
@@ -126,6 +129,7 @@ module ibex_controller #(
   logic exc_req_q, exc_req_d;
   logic illegal_insn_q, illegal_insn_d;
   logic mithril_sec_violation_q, mithril_sec_violation_d;
+  logic lpad_violation_q, lpad_violation_d;
 
   // Of the various exception/fault signals, which one takes priority in FLUSH and hence controls
   // what happens next (setting exc_cause, csr_mtval etc)
@@ -136,6 +140,7 @@ module ibex_controller #(
   logic store_err_prio;
   logic load_err_prio;
   logic mithril_sec_violation_prio;
+  logic lpad_violation_prio;
 
   logic stall;
   logic halt_if;
@@ -208,6 +213,10 @@ module ibex_controller #(
   // once illegal instruction is handled.
   // illegal_insn_i only set when instr_valid_i is set.
   assign illegal_insn_d = illegal_insn_i & (ctrl_fsm_cs != FLUSH);
+  
+  // LPAD violation (Zicfilp) - Software Check exception (code=18)
+  // lpad_violation_i is already qualified by instr_valid_i in ibex_id_stage
+  assign lpad_violation_d = lpad_violation_i & (ctrl_fsm_cs != FLUSH);
 
   `ASSERT(IllegalInsnOnlyIfInsnValid, illegal_insn_i |-> instr_valid_i)
 
@@ -216,7 +225,8 @@ module ibex_controller #(
   // the FLUSH state so the cycle following exc_req_q won't remain set for an
   // exception request that has just been handled.
   // All terms in this expression are qualified by instr_valid_i
-  assign exc_req_d = (ecall_insn | ebrk_insn | illegal_insn_d | instr_fetch_err | mithril_sec_violation_d) &
+  assign exc_req_d = (ecall_insn | ebrk_insn | illegal_insn_d | instr_fetch_err | 
+                      mithril_sec_violation_d | lpad_violation_d) &
                      (ctrl_fsm_cs != FLUSH);
 
   // LSU exception requests
@@ -253,6 +263,7 @@ module ibex_controller #(
       store_err_prio       = 0;
       load_err_prio        = 0;
       mithril_sec_violation_prio = 0;
+      lpad_violation_prio  = 0;
 
       // Note that with the writeback stage store/load errors occur on the instruction in writeback,
       // all other exception/faults occur on the instruction in ID/EX. The faults from writeback
@@ -266,6 +277,8 @@ module ibex_controller #(
         instr_fetch_err_prio = 1'b1;
       end else if (mithril_sec_violation_q) begin
         mithril_sec_violation_prio = 1'b1;
+      end else if (lpad_violation_q) begin
+        lpad_violation_prio = 1'b1;
       end else if (illegal_insn_q) begin
         illegal_insn_prio = 1'b1;
       end else if (ecall_insn) begin
@@ -286,10 +299,13 @@ module ibex_controller #(
       store_err_prio       = 0;
       load_err_prio        = 0;
       mithril_sec_violation_prio = 0;
+      lpad_violation_prio  = 0;
       if (instr_fetch_err) begin
         instr_fetch_err_prio = 1'b1;
       end else if (mithril_sec_violation_q) begin
         mithril_sec_violation_prio = 1'b1;
+      end else if (lpad_violation_q) begin
+        lpad_violation_prio = 1'b1;
       end else if (illegal_insn_q) begin
         illegal_insn_prio = 1'b1;
       end else if (ecall_insn) begin
@@ -308,6 +324,7 @@ module ibex_controller #(
   `ASSERT_IF(IbexExceptionPrioOnehot,
              $onehot({instr_fetch_err_prio,
                       mithril_sec_violation_prio,
+                      lpad_violation_prio,
                       illegal_insn_prio,
                       ecall_insn_prio,
                       ebrk_insn_prio,
@@ -813,6 +830,11 @@ module ibex_controller #(
               exc_cause_o = ExcCauseSecurityViolation;
               csr_mtval_o = pc_id_i;
             end
+            lpad_violation_prio: begin
+              // Zicfilp LPAD violation - Software Check exception (code=18)
+              exc_cause_o = ExcCauseSoftwareCheck;
+              csr_mtval_o = instr_is_compressed_i ? {16'b0, instr_compressed_i} : instr_i;
+            end
             default: ;
           endcase
         end else begin
@@ -905,6 +927,7 @@ module ibex_controller #(
       exc_req_q               <= 1'b0;
       illegal_insn_q          <= 1'b0;
       mithril_sec_violation_q <= 1'b0;
+      lpad_violation_q        <= 1'b0;
     end else begin
       ctrl_fsm_cs             <= ctrl_fsm_ns;
       nmi_mode_q              <= nmi_mode_d;
@@ -916,6 +939,7 @@ module ibex_controller #(
       exc_req_q               <= exc_req_d;
       illegal_insn_q          <= illegal_insn_d;
       mithril_sec_violation_q <= mithril_sec_violation_d;
+      lpad_violation_q        <= lpad_violation_d;
     end
   end
 

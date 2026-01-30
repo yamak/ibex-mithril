@@ -359,6 +359,8 @@
    '{irq_ext: 1'b0, irq_int: 1'b0, lower_cause: 5'd11};
  localparam exc_cause_t ExcCauseSecurityViolation =
    '{irq_ext: 1'b0, irq_int: 1'b0, lower_cause: 5'd12};
+  localparam exc_cause_t ExcCauseSoftwareCheck =
+    '{irq_ext: 1'b0, irq_int: 1'b0, lower_cause: 5'd18};  // Zicfilp LPAD violation
 
  // Internal NMI cause
  typedef enum logic [4:0] {

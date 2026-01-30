@@ -382,6 +382,7 @@ module ibex_core import ibex_pkg::*; #(
   logic        mithril_pac_en;
   logic        mithril_pac_spf_en;
   logic [3:0]  mithril_pac_spf_period;
+  logic        lpad_en;  // Zicfilp Landing Pad enable
   logic        mithril_pac_busy;
 
   assign current_pc_o = pc_id;
@@ -724,7 +725,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_s1_fwd_o       (mithril_pac_s1_fwd),
     .mithril_pac_valid_i        (mithril_pac_valid),
     .mithril_pac_busy_i         (mithril_pac_busy),
-    .mithril_pac_en_i           (mithril_pac_en)
+    .mithril_pac_en_i           (mithril_pac_en),
+    .lpad_en_i(lpad_en)
     );
 
   // for RVFI only
@@ -1254,7 +1256,8 @@ module ibex_core import ibex_pkg::*; #(
     .mithril_pac_en_o           (mithril_pac_en),
     .mithril_pac_ctx_o          (mithril_pac_ctx),
     .mithril_pac_spf_en_o       (mithril_pac_spf_en),
-    .mithril_pac_spf_period_o   (mithril_pac_spf_period)
+    .mithril_pac_spf_period_o   (mithril_pac_spf_period),
+    .lpad_en_o(lpad_en)
   );
 
   // These assertions are in top-level as instr_valid_id required as the enable term
