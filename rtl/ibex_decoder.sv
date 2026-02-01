@@ -100,7 +100,10 @@ module ibex_decoder #(
   output logic                 pac_sign_o,
   output logic                 pac_auth_o,
   output logic                 pac_store_o,
-  output logic                 pac_load_o
+  output logic                 pac_load_o,
+
+  // Zicfilp LPAD
+  output logic                 lpad_insn_o
 );
 
   import ibex_pkg::*;
@@ -240,6 +243,7 @@ module ibex_decoder #(
     pac_auth_o = 1'b0;
     pac_store_o = 1'b0;
     pac_load_o = 1'b0;
+    lpad_insn_o = 1'b0;
 
     opcode                = opcode_e'(instr[6:0]);
 
@@ -384,7 +388,16 @@ module ibex_decoder #(
       end
 
       OPCODE_AUIPC: begin  // Add Upper Immediate to PC
-        rf_we            = 1'b1;
+        if (instr_rd == 5'b00000) begin
+          // LPAD instruction: AUIPC x0, <label>
+          // Zicfilp landing pad - no write to register
+          lpad_insn_o = 1'b1;
+          rf_we = 1'b0;
+        end else begin
+          // Normal AUIPC
+          lpad_insn_o = 1'b0;
+          rf_we = 1'b1;
+        end
       end
 
       OPCODE_OP_IMM: begin // Register-Immediate ALU Operations

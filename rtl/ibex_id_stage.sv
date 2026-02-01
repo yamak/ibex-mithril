@@ -207,7 +207,10 @@ module ibex_id_stage #(
   output logic [31:0]               mithril_pac_s1_fwd_o,  // Forwarded s1 for PAC tweak
   input logic                       mithril_pac_valid_i,  // Pac valid signal for hazard detection
   input logic                       mithril_pac_busy_i,   // Pac busy signal (stage1 occupied)
-  input logic                       mithril_pac_en_i      // PAC enable signal from CSR
+  input logic                       mithril_pac_en_i,     // PAC enable signal from CSR
+  
+  // Zicfilp LPAD
+  input logic                       lpad_en_i             // Landing pad enable from CSR
 );
 
   import ibex_pkg::*;
@@ -341,6 +344,12 @@ module ibex_id_stage #(
   // Internal forwarded values for PAC message calculation
   logic [31:0] sp_fwd;
   logic [31:0] ra_fwd;
+
+  // Zicfilp LPAD signals
+  logic lpad_insn_dec;              // LPAD instruction from decoder
+  logic elp_q;                      // Expected Landing Pad state register
+  logic indirect_jump;              // Indirect jump/call detected
+  logic lpad_violation;             // LPAD violation detected
 
 
   /////////////
@@ -564,7 +573,10 @@ module ibex_id_stage #(
     .pac_sign_o(mithril_pac_sign_dec),
     .pac_auth_o(mithril_pac_auth_dec),
     .pac_store_o(mithril_pac_store_dec),
-    .pac_load_o(mithril_pac_load_dec)
+    .pac_load_o(mithril_pac_load_dec),
+    
+    // Zicfilp LPAD
+    .lpad_insn_o(lpad_insn_dec)
   );
 
   /////////////////////////////////
@@ -609,6 +621,8 @@ module ibex_id_stage #(
                               // MRET must be in M-Mode. TW means trap WFI to M-Mode.
                               (mret_insn_dec | (csr_mstatus_tw_i & wfi_insn_dec));
 
+  // LPAD violation is handled separately as Software Check exception (code=18)
+  // not as Illegal Instruction (code=2)
   assign illegal_insn_o = instr_valid_i &
       (illegal_insn_dec | illegal_csr_insn_i | illegal_dret_insn | illegal_umode_insn);
 
@@ -708,7 +722,10 @@ module ibex_id_stage #(
     .perf_tbranch_o(perf_tbranch_o),
     .mithril_ext_stall_i,
     .mithril_sec_violation_i,
-    .mithril_sec_violation_ack_o
+    .mithril_sec_violation_ack_o,
+    
+    // Zicfilp LPAD violation
+    .lpad_violation_i(lpad_violation)
   );
 
   // Mithril PAC: Detect function returns for authentication
@@ -720,6 +737,55 @@ module ibex_id_stage #(
   assign call_match = (jump_in_dec & (rf_waddr_id == 5'd1)) ;
   assign call_instr_first_cycle = call_match & ~call_instr_seen_q & instr_done;
   assign link_addr = pc_id_i + (instr_is_compressed_i ? 32'd2 : 32'd4);
+
+
+  // ========================================================================
+  // Zicfilp LPAD - Expected Landing Pad (ELP) State Machine
+  // ========================================================================
+  
+  // Indirect jump/call detection (Zicfilp spec)
+  // Only JALR sets ELP, not JAL (direct jump)
+  // rf_ren_a_dec distinguishes JALR (rs1 used) from JAL (rs1 not used)
+  // Return: JALR where rs1 = {x1, x5} -> ELP should NOT be set
+  // Indirect call/jump: JALR where rs1 != {x1, x5} -> ELP should be set
+  assign indirect_jump = jump_in_dec && !branch_in_dec && rf_ren_a_dec &&
+                         (rf_raddr_a_o != 5'd1) &&   // Not x1 (ra)
+                         (rf_raddr_a_o != 5'd5) &&   // Not x5 (t0, alternate link reg)
+                         instr_done;
+  
+  // ELP state register
+  // ELP must be cleared on:
+  // 1. LPAD instruction execution
+  // 2. Exception/interrupt (flush_id) - to avoid false violations in vector table
+  // 3. When LPAD is disabled
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      elp_q <= 1'b0;
+    end else if (flush_id || csr_save_cause_o) begin
+      // Clear ELP on pipeline flush (exception/interrupt)
+      // This prevents false LPAD violations when jumping to vector table
+      elp_q <= 1'b0;
+    end else if (lpad_en_i) begin
+      if (indirect_jump) begin
+        // Set ELP after indirect jump
+        elp_q <= 1'b1;
+      end else if (lpad_insn_dec && instr_valid_i) begin
+        // Clear ELP on LPAD instruction
+        elp_q <= 1'b0;
+      end
+    end else begin
+      // When LPAD disabled, keep ELP cleared
+      elp_q <= 1'b0;
+    end
+  end
+  
+  // LPAD violation detection
+  // Violation occurs when:
+  // 1. LPAD is enabled
+  // 2. ELP is set (expecting landing pad)
+  // 3. Current instruction is valid
+  // 4. Current instruction is NOT an LPAD
+  assign lpad_violation = lpad_en_i && elp_q && instr_valid_i && !lpad_insn_dec;
 
   
   always_ff @(posedge clk_i or negedge rst_ni) begin

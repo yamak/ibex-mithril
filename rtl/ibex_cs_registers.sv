@@ -128,7 +128,10 @@
   output logic [31:0]          mithril_pac_ctx_o,          // PAC Context (readable/writable)
   output logic                 mithril_pac_en_o,           // PAC enable
   output logic                 mithril_pac_spf_en_o,       // SPF enable
-  output logic [3:0]           mithril_pac_spf_period_o    // TRNG trigger period
+  output logic [3:0]           mithril_pac_spf_period_o,   // TRNG trigger period
+  
+  // Zicfilp LPAD
+  output logic                 lpad_en_o                   // Landing pad enable
 );
  
    import ibex_pkg::*;
@@ -263,9 +266,10 @@
    logic [31:0]  mithril_pac_ctx_q;
    logic         mithril_pac_ctx_en;
 
-  // PAC control CSR (bit0: PAC enable, bit1: SPF enable, bits[5:2]: TRNG period)
+  // PAC control CSR (bit0: PAC, bit1: SPF, bits[5:2]: TRNG period, bit6: LPAD)
   typedef struct packed {
-    logic [31:6] rsvd;
+    logic [31:7] rsvd;
+    logic        lpad_en;          // Landing Pad enable (Zicfilp)
     logic [3:0]  spf_trng_period;  // TRNG trigger period = 128 * (N+1) cycles
     logic        spf_en;           // Stochastic Pipeline Flooding enable
     logic        en;               // PAC enable
@@ -779,6 +783,7 @@
           mithril_pac_ctrl_d.en  = mithril_pac_ctrl_q.en | csr_wdata_int[0];
           mithril_pac_ctrl_d.spf_en = mithril_pac_ctrl_q.spf_en | csr_wdata_int[1];
           mithril_pac_ctrl_d.spf_trng_period = csr_wdata_int[5:2];
+          mithril_pac_ctrl_d.lpad_en = mithril_pac_ctrl_q.lpad_en | csr_wdata_int[6];  // Zicfilp LPAD
           mithril_pac_ctrl_d.rsvd = '0; 
         end
          CSR_MITHRIL_PAC_CTX: begin
@@ -937,6 +942,7 @@
   assign mithril_pac_ctx_o = mithril_pac_ctx_q;
   assign mithril_pac_spf_en_o = mithril_pac_ctrl_q.spf_en;
   assign mithril_pac_spf_period_o = mithril_pac_ctrl_q.spf_trng_period;
+  assign lpad_en_o = mithril_pac_ctrl_q.lpad_en;  // Zicfilp Landing Pad enable
  
    // Qualify incoming interrupt requests in mip CSR with mie CSR for controller and to re-enable
    // clock upon WFI (must be purely combinational).
