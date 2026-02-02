@@ -746,11 +746,13 @@ module ibex_id_stage #(
   // Indirect jump/call detection (Zicfilp spec)
   // Only JALR sets ELP, not JAL (direct jump)
   // rf_ren_a_dec distinguishes JALR (rs1 used) from JAL (rs1 not used)
-  // Return: JALR where rs1 = {x1, x5} -> ELP should NOT be set
-  // Indirect call/jump: JALR where rs1 != {x1, x5} -> ELP should be set
+  // Return/Link: JALR where rs1 = {x1, x5} -> ELP should NOT be set
+  // Software guarded branch: JALR where rs1 = x7 -> ELP should NOT be set
+  // Indirect call/jump: JALR where rs1 != {x1, x5, x7} -> ELP should be set
   assign indirect_jump = jump_in_dec && !branch_in_dec && rf_ren_a_dec &&
                          (rf_raddr_a_o != 5'd1) &&   // Not x1 (ra)
                          (rf_raddr_a_o != 5'd5) &&   // Not x5 (t0, alternate link reg)
+                         (rf_raddr_a_o != 5'd7) &&   // Not x7 (t2, software guarded branch)
                          instr_done;
   
   // ELP state register
